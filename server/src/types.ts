@@ -10,6 +10,11 @@ export interface Freeze {
   exp: number;
 }
 
+export interface OwnedSkin {
+  level: number;
+  shards: number;
+}
+
 export interface UserData {
   xp: number;
   energy: number;
@@ -70,6 +75,20 @@ export interface UserData {
   batches: string[];
   cards: Record<string, CardProgress>;
   skins: string[];
+  skinState: Record<string, OwnedSkin>;
+  combo: number;
+  comboAt: number;
+  bestCombo: number;
+  boxCharges: number;
+  boxProgress: number;
+  boxesOpened: number;
+  taskDay: string;
+  taskTaps: number;
+  taskBestCombo: number;
+  taskStreak: boolean;
+  taskUpgrade: boolean;
+  taskClaimed: string[];
+  achClaimed: string[];
   offers: string[];
   level5Granted: boolean;
   veteranGranted: boolean;

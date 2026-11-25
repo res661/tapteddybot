@@ -1,449 +1,297 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { request } from "./api.js";
-import { daysLeft, fmt, left } from "./format.js";
+import { BearFace } from "./bear.js";
+import { fmt, left } from "./format.js";
 import type { BoardResponse, GameState } from "./types.js";
 
-export function Sheet({ title, text, onClose, children }: { title: string; text?: string; onClose: () => void; children?: ReactNode }) {
-  return (
-    <div className="sheet-back" onClick={onClose}>
-      <div className="sheet glass" onClick={(event) => event.stopPropagation()}>
-        <h2>{title}</h2>
-        {text ? <p>{text}</p> : null}
-        {children}
-      </div>
-    </div>
-  );
+function stars(level: number) {
+  return "★".repeat(level) + "☆".repeat(Math.max(0, 5 - Math.ceil(level / 2)));
 }
 
 export function TapScreen({
   state,
   squish,
+  crit,
   floats,
+  sparks,
   onTap,
-  onOpen,
   onBuy,
-  onShop,
 }: {
   state: GameState;
   squish: boolean;
-  floats: { id: number; n: number; x: number }[];
+  crit: boolean;
+  floats: { id: number; n: number; x: number; crit: boolean }[];
+  sparks: { id: number; dx: string; dy: string }[];
   onTap: () => void;
-  onOpen: (sheet: "streak" | "code" | "combo" | "offline" | "newbie") => void;
   onBuy: (sku: string) => void;
-  onShop: () => void;
 }) {
-  const skin = state.skins.find((item) => item.id === state.me.skin);
-  const filter = [skin?.filter, "drop-shadow(0 18px 18px rgba(0,0,0,.38))"].filter(Boolean).join(" ");
-  const energyPct = Math.max(0, Math.min(100, (state.me.energy / Math.max(1, state.me.energyMax)) * 100));
-  const autotap = state.timers.autotapUntil > state.now;
+  const skin = state.skins.find((item) => item.id === state.me.skin) ?? state.skins[0];
+  const pct = Math.max(0, Math.min(100, (state.me.energy / Math.max(1, state.me.energyMax)) * 100));
   return (
-    <section>
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">TapTeddy</p>
-          <h1 className="balance" data-coins={state.me.coins}>
-            {fmt(state.me.coins)}
-            <span>мёда</span>
-          </h1>
+    <section className="play">
+      <header className="hud">
+        <div className="coin-pill">
+          <span className="coin-ic" aria-hidden="true">🍯</span>
+          <div>
+            <div className="num" data-coins={state.me.coins}>{fmt(state.me.coins)}</div>
+            <div className="tiny">мёд</div>
+          </div>
         </div>
-        <div className="level-pill glass">
-          <strong>{state.me.level}</strong>
-          <em>уровень</em>
-          <div className="xp">
-            <i style={{ width: `${Math.min(100, (state.me.xp / Math.max(1, state.me.xpNeed)) * 100)}%` }} />
+        <div className="lvl-pill">
+          <div>
+            <div className="num">{state.me.level}</div>
+            <div className="tiny">ур.</div>
           </div>
         </div>
       </header>
-
-      <div className="glass energy">
-        <div className="row">
-          <span className="label">Энергия</span>
-          <span className="value">
-            {fmt(state.me.energy)} / {fmt(state.me.energyMax)}
-          </span>
-        </div>
-        <div className="bar" aria-hidden="true">
-          <i style={{ width: `${energyPct}%` }} />
-        </div>
-        <div className="row faint">
-          <span>+1 / {(state.me.regenMs / 1000).toFixed(1)} с</span>
-          <span>
-            тап +{state.me.perTap}
-            {state.me.tankTokens > 0 ? ` · жетоны ${state.me.tankTokens}` : ""}
-          </span>
-        </div>
+      <div className="energy">
+        <div className="row tiny"><span>Энергия</span><span>{fmt(state.me.energy)} / {fmt(state.me.energyMax)}</span></div>
+        <div className="bar"><i style={{ width: `${pct}%` }} /></div>
       </div>
-
-      <div className="chip-row">
-        <button className="chip" onClick={() => onOpen("streak")}>
-          Серия {state.streak.day || 0}/7
-        </button>
-        <button className="chip gold" onClick={onShop}>
-          Teddy Pass · {daysLeft(state.pass.endsAt, state.now)} дн.
-        </button>
-        {state.clanBuff.stormUntil > state.now ? (
-          <span className="chip">Шторм {state.clanBuff.stormPct}% · {left(state.clanBuff.stormUntil, state.now)}</span>
-        ) : null}
-      </div>
-
-      {state.offer ? (
-        <button className="cta" onClick={() => onBuy("offer")}>
-          {state.offer.title} · {state.offer.stars}⭐
-        </button>
-      ) : null}
-
-      <div className="stage">
-        {state.me.boost >= 2 ? <div className="badge-x2">x2</div> : null}
+      <div className={`stage ${crit ? "crit" : ""}`}>
+        {state.me.combo >= 10 ? <div className="combo-flag">x{state.me.combo}</div> : null}
         {floats.map((float) => (
-          <span key={float.id} className="float" style={{ left: `${float.x}%` }}>
-            +{float.n}
-          </span>
+          <span key={float.id} className={float.crit ? "float crit" : "float"} style={{ left: `${float.x}%` }}>+{float.n}</span>
         ))}
-        <button className="bear-hit" data-testid="bear" aria-label="Тапнуть мишку" onPointerDown={(event) => { event.preventDefault(); onTap(); }} onContextMenu={(event) => event.preventDefault()}>
-          <div className={squish ? "bear-wrap squish" : "bear-wrap"}>
-            <img src="/bear.png" alt="" style={{ filter }} />
-          </div>
-        </button>
-        <div className="per-tap">+{state.me.perTap} за тап</div>
-        {state.timers.autopilotUntil > state.now ? <div className="capsule">Автопилот {left(state.timers.autopilotUntil, state.now)}</div> : null}
-        {autotap ? <div className="capsule">Автотап {left(state.timers.autotapUntil, state.now)}</div> : null}
-      </div>
-
-      <button className="streak glass" onClick={() => onOpen("streak")} aria-label="Ежедневная серия">
-        {state.streak.rewards.map((reward) => (
-          <span key={reward.day} className={reward.day <= state.streak.day && state.streak.claimedToday ? "dot on" : reward.day < state.streak.day ? "dot on" : reward.day === state.streak.day + 1 && !state.streak.claimedToday ? "dot today" : "dot"}>
-            {reward.day}
-          </span>
+        {sparks.map((spark) => (
+          <i key={spark.id} className="spark" style={{ left: "50%", top: "46%", ["--dx" as string]: spark.dx, ["--dy" as string]: spark.dy }} />
         ))}
-      </button>
-
-      {state.refill.show ? (
-        <button className="cta" onClick={() => onBuy("refill")}>
-          Восстановить · {state.refill.price}⭐
-        </button>
-      ) : null}
-
-      <div className="mini-grid">
-        <button className="ghost" onClick={() => onOpen("code")}>
-          Код дня
-          <div className="faint">{state.daily.codeDone ? "уже введён" : state.daily.codeUnlocked ? `до ${fmt(state.daily.codeReward)}` : "с 5 уровня"}</div>
-        </button>
-        <button className="ghost" onClick={() => onOpen("combo")}>
-          Комбо дня
-          <div className="faint">{state.daily.comboDone ? "собрано" : `${state.daily.combo.filter((card) => card.done).length}/3`}</div>
+        <button className="bear-btn" data-testid="bear" aria-label="Тапнуть мишку" onPointerDown={(event) => { event.preventDefault(); onTap(); }} onContextMenu={(event) => event.preventDefault()}>
+          {skin ? <BearFace filter={skin.filter} accessory={skin.accessory} backdrop={skin.backdrop} squish={squish} /> : null}
         </button>
       </div>
+      <p className="sub" style={{ textAlign: "center" }}>+{state.me.perTap} за тап{state.me.crit > 0 ? ` · крит ${Math.round(state.me.crit * 100)}%` : ""}</p>
+      {state.refill.show ? <button className="press wide" onClick={() => onBuy("refill")}>Восстановить · {state.refill.price}⭐</button> : null}
     </section>
   );
 }
 
-export function UpgradesScreen({ state, onAct }: { state: GameState; onAct: (body: Record<string, unknown>) => void }) {
-  const [page, setPage] = useState<"core" | "cards">("core");
-  return (
-    <section>
-      <h2 className="screen-title">Сила</h2>
-      <div className="seg glass">
-        <button className={page === "core" ? "on" : ""} onClick={() => setPage("core")}>Прокачка</button>
-        <button className={page === "cards" ? "on" : ""} onClick={() => setPage("cards")}>Карты</button>
-      </div>
-      {page === "core" ? (
-        <div className="stack">
-          <article className="glass upgrade-card">
-            <div>
-              <b>Мультитап {state.upgrades.multitap.level}</b>
-              <p>Сейчас +{state.me.perTap} мёда за тап. Потолок до уровня: {state.me.level + 3}.</p>
-            </div>
-            <button className="tiny" disabled={state.upgrades.multitap.cost == null} onClick={() => onAct({ type: "upgrade", kind: "multitap" })}>
-              {state.upgrades.multitap.cost == null ? "Потолок" : fmt(state.upgrades.multitap.cost)}
-            </button>
-          </article>
-          <article className="glass upgrade-card">
-            <div>
-              <b>Бак {state.upgrades.energy.level}</b>
-              <p>+250 энергии за уровень. Сейчас {fmt(state.me.energyMax)}.</p>
-            </div>
-            <button className="tiny" disabled={state.upgrades.energy.cost == null} onClick={() => onAct({ type: "upgrade", kind: "energy" })}>
-              {state.upgrades.energy.cost == null ? "Потолок" : fmt(state.upgrades.energy.cost)}
-            </button>
-          </article>
-          <article className="glass upgrade-card">
-            <div>
-              <b>Реген {state.upgrades.regen.level}</b>
-              <p>Сейчас 1 энергия за {(state.me.regenMs / 1000).toFixed(1)} с. Быстрее 1.2 с нельзя.</p>
-            </div>
-            <button className="tiny" disabled={state.upgrades.regen.cost == null} onClick={() => onAct({ type: "upgrade", kind: "regen" })}>
-              {state.upgrades.regen.cost == null ? "Потолок" : fmt(state.upgrades.regen.cost)}
-            </button>
-          </article>
-          {state.me.tankTokens > 0 ? (
-            <button className="cta" onClick={() => onAct({ type: "use_token" })}>Жетон бака · {state.me.tankTokens}</button>
-          ) : null}
-        </div>
-      ) : (
-        <div className="stack">
-          <p className="sub">Карты — главный сток мёда. Доход и сила написаны на карточке.</p>
-          {state.categories.map((category) => (
-            <div key={category.id}>
-              <h3>{category.name}</h3>
-              <p className="sub">{category.locked ? `Откроется на ${category.minLevel} уровне` : category.blurb}</p>
-              <div className="card-grid">
-                {category.cards.map((card) => (
-                  <article key={card.id} className="glass upgrade-card">
-                    <div>
-                      <div className="kind">{card.kind === "income" ? "доход" : card.kind === "tap" ? "сила" : card.kind === "regen" ? "реген" : "бак"} · {card.level}/{card.max}</div>
-                      <b>{card.name}</b>
-                      <p>{card.locked ? `с ${card.minLevel} уровня` : `${card.effect} → ${card.next}`}</p>
-                    </div>
-                    <button className="tiny" disabled={card.cost == null} onClick={() => onAct({ type: "card", cardId: card.id })}>
-                      {card.cost == null ? (card.locked ? "Закрыто" : "Макс") : fmt(card.cost)}
-                    </button>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-const GROUPS: { id: string; title: string }[] = [
-  { id: "offer", title: "Наборы" },
-  { id: "energy", title: "Энергия" },
-  { id: "boost", title: "Бусты" },
-  { id: "pass", title: "Teddy Pass" },
-  { id: "clan", title: "Клан" },
-  { id: "cosmetic", title: "Внешность" },
-];
-
-export function ShopScreen({
+export function SkinsScreen({
   state,
   onAct,
   onBuy,
 }: {
   state: GameState;
   onAct: (body: Record<string, unknown>) => void;
-  onBuy: (sku: string, extra?: { levels?: number }) => void;
+  onBuy: (sku: string) => void;
 }) {
-  const [levels, setLevels] = useState(1);
-  const rewardTracks = state.pass.tracks.filter((track) => track.free || track.paid);
+  const [picked, setPicked] = useState<string | null>(null);
+  const skin = state.skins.find((item) => item.id === picked) ?? null;
+  const pct = Math.min(100, (state.box.progress / Math.max(1, state.box.goal)) * 100);
   return (
     <section>
-      <h2 className="screen-title">Лавка</h2>
-      <p className="sub">Звёзды покупают время, бак и окрасы. Случайных ящиков нет: на кнопке весь состав.</p>
-      <article className="glass card">
-        <h3>Teddy Pass · уровень {state.pass.level}/30</h3>
-        <p>{state.pass.owned ? "+20% до конца сезона и платная дорожка." : "Бесплатная дорожка уже идёт. Пропуск добавляет +20% и редкие окрасы."}</p>
-        <div className="bar" style={{ marginTop: 10 }}>
-          <i style={{ width: `${(state.pass.xpInto / state.pass.xpPerLevel) * 100}%` }} />
-        </div>
-        <div className="actions">
-          <button className="tiny" onClick={() => onAct({ type: "claim_pass" })}>Забрать награды</button>
-          {!state.pass.owned ? <button className="tiny" onClick={() => onBuy("pass")}>Купить · 250⭐</button> : null}
-        </div>
-        {state.pass.owned && state.pass.level < 30 ? (
-          <div className="actions">
-            <button className="tiny glass-btn" onClick={() => setLevels((value) => Math.max(1, value - 1))}>−</button>
-            <button className="tiny" onClick={() => onBuy("pass_levels", { levels })}>{levels} ур. · {15 * levels}⭐</button>
-            <button className="tiny glass-btn" onClick={() => setLevels((value) => Math.min(30 - state.pass.level, value + 1))}>+</button>
+      <h1 className="h1">Окрасы</h1>
+      <p className="sub">Коллекция {state.collection.owned}/{state.collection.total} · {state.collection.pct}%</p>
+      <div className="bar" style={{ marginBottom: 12 }}><i style={{ width: `${state.collection.pct}%` }} /></div>
+      <article className="gloss">
+        <b>Плюшевый бокс</b>
+        <p className="tiny">Бесплатно за тапы. Каждые {state.box.goal} тапов — заряд. Шансы: {state.box.odds.map((odd) => `${({ common: "обычный", rare: "редкий", epic: "эпик", legendary: "легенда", mythic: "миф" } as Record<string, string>)[odd.rarity] ?? odd.rarity} ${odd.pct}%`).join(" · ")}</p>
+        <div className="bar"><i style={{ width: `${pct}%` }} /></div>
+        <button className="press wide" disabled={state.box.charges <= 0} onClick={() => onAct({ type: "open_box" })}>
+          Открыть · {state.box.charges}
+        </button>
+      </article>
+      <div className="grid">
+        {state.skins.map((item) => (
+          <button key={item.id} className={`gloss skin-card r-${item.rarity} ${item.owned ? "" : "lock"}`} onClick={() => setPicked(item.id)}>
+            <BearFace filter={item.filter} accessory={item.accessory} backdrop={item.backdrop} size={96} />
+            <b>{item.name}</b>
+            <span className="tiny">{item.owned ? stars(item.level) : item.rarity}</span>
+          </button>
+        ))}
+      </div>
+      {skin ? (
+        <div className="sheet-back" onClick={() => setPicked(null)}>
+          <div className="sheet" onClick={(event) => event.stopPropagation()}>
+            <BearFace filter={skin.filter} accessory={skin.accessory} backdrop={skin.backdrop} size={140} />
+            <h2 className="h1" style={{ fontSize: 28 }}>{skin.name}</h2>
+            <p className="sub">{skin.blurb}</p>
+            <p>{skin.bonus}</p>
+            {skin.owned && skin.upgradeShards ? <p className="tiny">Дальше: {skin.nextBonus}. Осколки {skin.shards}/{skin.upgradeShards}</p> : null}
+            <div className="row">
+              {skin.owned && !skin.equipped ? <button className="press sm" onClick={() => onAct({ type: "equip", skinId: skin.id })}>Надеть</button> : null}
+              {skin.equipped ? <b>Надет</b> : null}
+              {skin.owned && skin.upgradeCoins != null ? (
+                <button className="press sm" onClick={() => onAct({ type: "upgrade_skin", skinId: skin.id })}>
+                  Улучшить · {fmt(skin.upgradeCoins)}
+                </button>
+              ) : null}
+              {!skin.owned && skin.currency === "coins" ? (
+                <button className="press sm" disabled={skin.locked} onClick={() => onAct({ type: "buy_skin", skinId: skin.id })}>
+                  {skin.locked ? `${skin.minLevel} ур.` : `${fmt(skin.price)} мёда`}
+                </button>
+              ) : null}
+              {!skin.owned && skin.currency === "stars" ? (
+                <button className="press sm" disabled={skin.locked} onClick={() => onBuy(`skin_${skin.id}`)}>
+                  {skin.locked ? `${skin.minLevel} ур.` : `${skin.price}⭐`}
+                </button>
+              ) : null}
+            </div>
           </div>
-        ) : null}
-        <div style={{ marginTop: 8 }}>
-          {rewardTracks.map((track) => (
-            <div className="track" key={track.level}>
-              <b>{track.level}.</b> {track.free ?? "—"} {track.paid ? ` / пасс: ${track.paid}` : ""}
-              {track.level <= state.pass.claimedFree ? " · забрано" : ""}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function BoostsScreen({ state, onAct, onBuy }: { state: GameState; onAct: (body: Record<string, unknown>) => void; onBuy: (sku: string, extra?: { levels?: number }) => void }) {
+  const [cards, setCards] = useState(false);
+  return (
+    <section>
+      <h1 className="h1">Бусты</h1>
+      <article className="gloss">
+        <div className="row"><b>Мультитап {state.upgrades.multitap.level}</b>
+          <button className="press sm" disabled={state.upgrades.multitap.cost == null} onClick={() => onAct({ type: "upgrade", kind: "multitap" })}>{state.upgrades.multitap.cost == null ? "Макс" : fmt(state.upgrades.multitap.cost)}</button>
+        </div>
+        <div className="row"><b>Бак {state.upgrades.energy.level}</b>
+          <button className="press sm" disabled={state.upgrades.energy.cost == null} onClick={() => onAct({ type: "upgrade", kind: "energy" })}>{state.upgrades.energy.cost == null ? "Макс" : fmt(state.upgrades.energy.cost)}</button>
+        </div>
+        <div className="row"><b>Реген {state.upgrades.regen.level}</b>
+          <button className="press sm" disabled={state.upgrades.regen.cost == null} onClick={() => onAct({ type: "upgrade", kind: "regen" })}>{state.upgrades.regen.cost == null ? "Макс" : fmt(state.upgrades.regen.cost)}</button>
+        </div>
+        <p className="tiny">Пассив {fmt(state.passive.perHour)}/ч · копилка {state.passive.capHours} ч · {fmt(state.passive.bank)} внутри</p>
+        <button className="press sm" disabled={state.passive.bank <= 0} onClick={() => onAct({ type: "claim_passive" })}>Забрать копилку</button>
+      </article>
+      <button className="press wide" onClick={() => setCards((value) => !value)}>{cards ? "Скрыть карты" : "Карты дохода"}</button>
+      {cards ? state.categories.map((category) => (
+        <div key={category.id}>
+          <h3>{category.name}</h3>
+          {category.locked ? <p className="tiny">С {category.minLevel} уровня</p> : null}
+          {category.cards.map((card) => (
+            <div className="gloss" key={card.id}>
+              <div className="row">
+                <div><b>{card.name}</b><div className="tiny">{card.locked ? `ур. ${card.minLevel}` : `${card.effect} · ${card.level}/${card.max}`}</div></div>
+                <button className="press sm" disabled={card.cost == null} onClick={() => onAct({ type: "card", cardId: card.id })}>{card.cost == null ? "—" : fmt(card.cost)}</button>
+              </div>
             </div>
           ))}
         </div>
+      )) : null}
+      <article className="gloss">
+        <b>Teddy Pass · {state.pass.level}/30</b>
+        <p className="tiny">{state.pass.owned ? "Пропуск активен" : "Бесплатная дорожка уже идёт"} · осталось {left(state.pass.endsAt, state.now)}</p>
+        <div className="row">
+          <button className="press sm" onClick={() => onAct({ type: "claim_pass" })}>Забрать</button>
+          {!state.pass.owned ? <button className="press sm" onClick={() => onBuy("pass")}>250⭐</button> : null}
+        </div>
       </article>
-
-      <h3>Окрасы мишки</h3>
-      <p className="sub">Только внешний вид. На мёд и рейтинг не влияют.</p>
-      <div className="skin-grid">
-        {state.skins.filter((skin) => skin.shop || skin.owned).map((skin) => (
-          <article key={skin.id} className="glass skin">
-            <img src="/bear.png" alt="" style={{ filter: skin.filter || undefined }} />
-            <strong>{skin.name}</strong>
-            <em>{skin.blurb}</em>
-            {skin.equipped ? <div className="price">Надет</div> : null}
-            {skin.owned && !skin.equipped ? <button className="tiny" onClick={() => onAct({ type: "equip", skinId: skin.id })}>Надеть</button> : null}
-            {!skin.owned && skin.currency === "coins" ? (
-              <button className="tiny" disabled={skin.locked} onClick={() => onAct({ type: "buy_skin", skinId: skin.id })}>
-                {skin.locked ? `${skin.minLevel} ур.` : `${fmt(skin.price)} мёда`}
-              </button>
-            ) : null}
-            {!skin.owned && skin.currency === "stars" ? (
-              <button className="tiny" disabled={skin.locked} onClick={() => onBuy(`skin_${skin.id}`)}>
-                {skin.locked ? `${skin.minLevel} ур.` : `${skin.price}⭐`}
-              </button>
-            ) : null}
-          </article>
-        ))}
-      </div>
-
-      {GROUPS.map((group) => {
-        const items = state.products.filter((item) => item.group === group.id && item.sku !== "pass" && item.sku !== "pass_levels" && !item.sku.startsWith("skin_"));
-        if (!items.length) return null;
-        return (
-          <div key={group.id}>
-            <h3>{group.title}</h3>
-            <div className="stack">
-              {items.map((item) => (
-                <article key={item.sku} className="glass card">
-                  <h3>{item.title}</h3>
-                  <p>{item.description}</p>
-                  <div className="actions">
-                    <button className="tiny" disabled={item.stars == null} onClick={() => onBuy(item.sku)}>
-                      {item.stars == null ? item.reason ?? "Недоступно" : `${item.stars}⭐`}
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
+      {state.products.filter((item) => !item.sku.startsWith("skin_") && item.sku !== "pass").map((item) => (
+        <div className="gloss" key={item.sku}>
+          <div className="row">
+            <div><b>{item.title}</b><div className="tiny">{item.description}</div></div>
+            <button className="press sm" disabled={item.stars == null} onClick={() => onBuy(item.sku)}>{item.stars == null ? "—" : `${item.stars}⭐`}</button>
           </div>
-        );
-      })}
+        </div>
+      ))}
     </section>
   );
 }
 
-export function ClanScreen({ state, onAct, onBuy }: { state: GameState; onAct: (body: Record<string, unknown>) => void; onBuy: (sku: string) => void }) {
-  const [name, setName] = useState("");
-  const [chat, setChat] = useState("");
+export function TasksScreen({ state, onAct }: { state: GameState; onAct: (body: Record<string, unknown>) => void }) {
   const [code, setCode] = useState("");
-  if (state.me.level < 8) {
-    return (
-      <section>
-        <h2 className="screen-title">Клан</h2>
-        <article className="glass card">
-          <h3>Откроется на 8 уровне</h3>
-          <p>Клан — это канал или чат. Соло-рейтинг от этого не страдает.</p>
-        </article>
-      </section>
-    );
-  }
-  if (!state.clan) {
-    return (
-      <section>
-        <h2 className="screen-title">Клан</h2>
-        <article className="glass card">
-          <h3>Создать</h3>
-          <p>Если привязываешь канал, добавь бота админом и укажи @username.</p>
-          <input className="field" placeholder="Название" value={name} onChange={(event) => setName(event.target.value)} />
-          <input className="field" placeholder="@канал, необязательно" value={chat} onChange={(event) => setChat(event.target.value)} />
-          <button className="cta" onClick={() => onAct({ type: "clan_create", name, chat })}>Создать клан</button>
-        </article>
-        <article className="glass card">
-          <h3>Вступить по коду</h3>
-          <input className="field" placeholder="Код" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} />
-          <button className="ghost" onClick={() => onAct({ type: "clan_join", code })}>Вступить</button>
-        </article>
-      </section>
-    );
-  }
-  const clan = state.clan;
   return (
     <section>
-      <h2 className="screen-title">{clan.name}</h2>
-      <p className="sub">
-        Уровень {clan.level} · {clan.members}/{clan.cap} · код {clan.code}
-        {clan.flag === "gold" ? " · золотой флаг" : clan.flag === "silver" ? " · флаг" : clan.flag === "top10" ? " · рамка недели" : ""}
-      </p>
-      <article className="glass card">
-        <div className="list-row"><span>Неделя</span><b>{fmt(clan.weekPoints)}</b></div>
-        <div className="list-row"><span>Сезон</span><b>{fmt(clan.seasonPoints)}</b></div>
-        <div className="list-row"><span>Место в сезоне</span><b>{clan.rankSeason}</b></div>
-        {clan.chat ? <div className="list-row"><span>Чат</span><b>{clan.chat}</b></div> : null}
-        <div className="actions">
-          <button className="tiny glass-btn" onClick={() => void navigator.clipboard.writeText(clan.link)}>Ссылка</button>
-          <button className="tiny" onClick={() => onBuy("storm_20")}>Шторм 20% · 150⭐</button>
-          <button className="tiny" onClick={() => onBuy("storm_30")}>Шторм 30% · 300⭐</button>
+      <h1 className="h1">Дела</h1>
+      <article className="gloss">
+        <b>Серия {state.streak.day}/7</b>
+        <div className="row">
+          {state.streak.rewards.map((reward) => <span key={reward.day} className="tiny">{reward.day}</span>)}
         </div>
-        {clan.stormUntil > state.now ? <p>Шторм {clan.stormPct}% ещё {left(clan.stormUntil, state.now)}</p> : null}
+        <button className="press wide" disabled={state.streak.claimedToday} onClick={() => onAct({ type: "streak" })}>Забрать день</button>
+        {state.streak.canSave && state.streak.freezes > 0 ? <button className="press sm" onClick={() => onAct({ type: "save_streak" })}>Сохранить серию</button> : null}
       </article>
-      <article className="glass card">
-        {clan.top.map((member) => (
-          <div className="list-row" key={member.id}>
-            <span>{member.name}</span>
-            <b>{fmt(member.points)}</b>
+      {state.tasks.map((task) => (
+        <div className="gloss" key={task.id}>
+          <div className="row">
+            <div><b>{task.title}</b><div className="tiny">{Math.min(task.value, task.goal)}/{task.goal} · {task.reward}</div></div>
+            <button className="press sm" disabled={!task.done || task.claimed} onClick={() => onAct({ type: "claim_task", taskId: task.id })}>{task.claimed ? "Ок" : "Забрать"}</button>
           </div>
-        ))}
-        <button className="ghost" onClick={() => onAct({ type: "clan_leave" })}>Выйти</button>
+        </div>
+      ))}
+      <h3>Ачивки</h3>
+      {state.achievements.map((item) => (
+        <div className="row" key={item.id}>
+          <span>{item.title} · {Math.min(item.value, item.goal)}/{item.goal}</span>
+          <b>{item.claimed ? "✓" : fmt(item.coins)}</b>
+        </div>
+      ))}
+      <button className="press wide" onClick={() => onAct({ type: "claim_achievement" })}>Забрать готовые</button>
+      <article className="gloss">
+        <b>Код дня</b>
+        <p className="tiny">{state.daily.codeUnlocked ? `до ${fmt(state.daily.codeReward)}` : "с 5 уровня"} {state.channelUrl}</p>
+        <input className="field" value={code} maxLength={8} placeholder="Код" onChange={(event) => setCode(event.target.value.toUpperCase())} />
+        <button className="press sm" disabled={!state.daily.codeUnlocked || state.daily.codeDone} onClick={() => onAct({ type: "code", code })}>Ввести</button>
+      </article>
+      <article className="gloss">
+        <b>Комбо карт</b>
+        {state.daily.combo.map((card) => <div className="row" key={card.id}><span>{card.name}</span><b>{card.done ? "да" : "нет"}</b></div>)}
+        <button className="press sm" disabled={state.daily.comboDone} onClick={() => onAct({ type: "combo" })}>Забрать {fmt(state.daily.comboReward)}</button>
+      </article>
+      <article className="gloss">
+        <b>Друзья {state.friends.qualified}/{state.friends.total}</b>
+        <p className="tiny">{state.friends.link}</p>
+        <button className="press sm" onClick={() => void navigator.clipboard.writeText(state.friends.link)}>Скопировать</button>
       </article>
     </section>
   );
 }
 
-export function TopScreen({ state }: { state: GameState }) {
+export function TopScreen({ state, onAct, onBuy }: { state: GameState; onAct: (body: Record<string, unknown>) => void; onBuy: (sku: string) => void }) {
   const [board, setBoard] = useState<"solo" | "clan">("solo");
   const [scope, setScope] = useState<"season" | "all">("season");
   const [data, setData] = useState<BoardResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
   useEffect(() => {
     let stop = false;
     request<BoardResponse>(`/api/leaderboard?board=${board}&scope=${scope}`)
       .then((payload) => { if (!stop) setData(payload); })
-      .catch((err: Error) => { if (!stop) setError(err.message); });
+      .catch(() => undefined);
     return () => { stop = true; };
   }, [board, scope]);
+  const leaguePct = state.league.next ? Math.min(100, (state.league.score / state.league.next) * 100) : 100;
   return (
     <section>
-      <h2 className="screen-title">Топ</h2>
-      <div className="seg glass">
-        <button className={board === "solo" ? "on" : ""} onClick={() => setBoard("solo")}>Соло</button>
-        <button className={board === "clan" ? "on" : ""} onClick={() => setBoard("clan")}>Кланы</button>
+      <h1 className="h1">Топ</h1>
+      <article className="gloss">
+        <b>Лига: {state.league.name}</b>
+        <p className="tiny">Неделя {fmt(state.league.score)}{state.league.next ? ` / ${fmt(state.league.next)}` : ""}</p>
+        <div className="bar"><i style={{ width: `${leaguePct}%` }} /></div>
+      </article>
+      <div className="row">
+        <button className={board === "solo" ? "press sm" : "press sm"} onClick={() => setBoard("solo")}>Соло</button>
+        <button className="press sm" onClick={() => setBoard("clan")}>Кланы</button>
+        <button className="press sm" onClick={() => setScope(scope === "season" ? "all" : "season")}>{scope === "season" ? "Сезон" : "Всё время"}</button>
       </div>
-      <div className="seg glass">
-        <button className={scope === "season" ? "on" : ""} onClick={() => setScope("season")}>Сезон</button>
-        <button className={scope === "all" ? "on" : ""} onClick={() => setScope("all")}>Всё время</button>
-      </div>
-      <p className="sub">{state.me.name}: {data?.meRank ? `место ${data.meRank}` : "очки ещё копиются"} {error}</p>
-      <article className="glass card">
-        {(data?.rows ?? []).map((row) => (
-          <div className="list-row" key={row.id}>
-            <span className={row.nameColor === "honey" ? "name-honey" : row.me ? "me-name" : ""}>
-              {row.rank}. {row.name}
-            </span>
-            <b>{scope === "all" && board === "solo" ? `ур. ${row.level}` : fmt(row.score)}</b>
-          </div>
-        ))}
-        {!data?.rows.length ? <p>Пока тихо. Первый мёд уже считается.</p> : null}
-      </article>
-    </section>
-  );
-}
-
-export function FriendsScreen({ state }: { state: GameState }) {
-  return (
-    <section>
-      <h2 className="screen-title">Друзья</h2>
-      <article className="glass card">
-        <h3>{state.friends.qualified} из {state.friends.total} играют</h3>
-        <p>5 000 мёда, когда друг дойдёт до 3 уровня и сделает 500 тапов. 10% его мёда — первые 14 дней, только игровые, не звёзды.</p>
-        <div className="actions">
-          <button className="tiny" onClick={() => void navigator.clipboard.writeText(state.friends.link)}>Скопировать ссылку</button>
-        </div>
-        <p className="faint">{state.friends.link}</p>
-      </article>
-      <article className="glass card">
-        {state.friends.milestones.map((item) => (
-          <div className="list-row" key={item.n}>
-            <span>{item.n} друзей — {item.label}</span>
-            <b>{item.done ? "есть" : "ещё нет"}</b>
+      <p className="tiny">{data?.meRank ? `Место ${data.meRank}` : "Пока без места"}</p>
+      <article className="gloss">
+        {(data?.rows ?? []).slice(0, 30).map((row) => (
+          <div className="row" key={`${row.id}-${row.rank}`}>
+            <span>{row.rank}. {row.name}</span>
+            <b>{fmt(row.score)}</b>
           </div>
         ))}
       </article>
-      <article className="glass card">
-        {state.friends.list.map((friend) => (
-          <div className="list-row" key={friend.id}>
-            <span>{friend.name} · ур. {friend.level}</span>
-            <b>{friend.qualified ? "засчитан" : `${friend.taps}/500`}</b>
+      <h3>Клан</h3>
+      {state.me.level < 8 ? <p className="tiny">Кланы с 8 уровня. Соло-лига от этого не страдает.</p> : null}
+      {state.clan ? (
+        <article className="gloss">
+          <b>{state.clan.name}</b>
+          <p className="tiny">Код {state.clan.code} · {state.clan.members}/{state.clan.cap} · неделя {fmt(state.clan.weekPoints)}</p>
+          {state.clan.stormUntil > state.now ? <p>Шторм {state.clan.stormPct}% · {left(state.clan.stormUntil, state.now)}</p> : null}
+          <div className="row">
+            <button className="press sm" onClick={() => onBuy("storm_20")}>Шторм 150⭐</button>
+            <button className="press sm" onClick={() => onAct({ type: "clan_leave" })}>Выйти</button>
           </div>
-        ))}
-        {!state.friends.list.length ? <p>Пока никого. Ссылка выше.</p> : null}
-      </article>
+        </article>
+      ) : state.me.level >= 8 ? (
+        <article className="gloss">
+          <input className="field" placeholder="Название" value={name} onChange={(event) => setName(event.target.value)} />
+          <button className="press sm" onClick={() => onAct({ type: "clan_create", name })}>Создать</button>
+          <input className="field" placeholder="Код" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} />
+          <button className="press sm" onClick={() => onAct({ type: "clan_join", code })}>Вступить</button>
+        </article>
+      ) : null}
     </section>
   );
 }

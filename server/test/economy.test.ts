@@ -4,6 +4,9 @@ import { freshData } from "../src/store.js";
 import type { User } from "../src/types.js";
 import {
   SEASON_EPOCH,
+  leagueOf,
+  rarityFromRoll,
+  shardsOnDuplicate,
   cardUpgradeCost,
   clanMemberCap,
   codeReward,
@@ -129,6 +132,20 @@ test("окно спасения серии — сутки после пропу�
   assert.equal(canSaveStreak(bear, now), true);
   bear.data.streakLast = "2026-11-21";
   assert.equal(canSaveStreak(bear, now), false);
+});
+
+test("плюшевый бокс: шансы и осколки, лиги по недельному мёду", () => {
+  assert.equal(rarityFromRoll(0), "common");
+  assert.equal(rarityFromRoll(5499), "common");
+  assert.equal(rarityFromRoll(5500), "rare");
+  assert.equal(rarityFromRoll(9499), "epic");
+  assert.equal(rarityFromRoll(9899), "legendary");
+  assert.equal(rarityFromRoll(9900), "mythic");
+  assert.equal(shardsOnDuplicate("common"), 1);
+  assert.equal(shardsOnDuplicate("mythic"), 16);
+  assert.equal(leagueOf(0).id, "bronze");
+  assert.equal(leagueOf(5_000).id, "silver");
+  assert.equal(leagueOf(400_000).id, "diamond");
 });
 
 test("лимитированный набор попадает в среду и субботу", () => {

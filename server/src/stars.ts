@@ -414,7 +414,7 @@ for (const skin of SKINS) {
     sku: `skin_${skin.id}`,
     group: "cosmetic",
     title: () => skin.name,
-    description: `${skin.blurb}. Окрас не даёт мёда и не двигает рейтинг.`,
+    description: `${skin.blurb}. Конкретный окрас, не случайный ящик. Бонус растёт с уровнем.`,
     stars: () => skin.price,
     reason: (ctx) => {
       if (ctx.user.data.skins.includes(skin.id)) return "Уже есть";
@@ -555,7 +555,9 @@ export function revertGrants(ctx: Ctx, grants: Grant[], now: number): void {
         break;
       case "skin":
         user.data.skins = user.data.skins.filter((id) => id !== grant.id);
+        if (user.data.skinState) delete user.data.skinState[grant.id];
         if (!user.data.skins.includes("classic")) user.data.skins.unshift("classic");
+        if (!user.data.skinState.classic) user.data.skinState.classic = { level: 1, shards: 0 };
         if (user.skinId === grant.id) user.skinId = "classic";
         break;
       case "pass":

@@ -133,6 +133,22 @@ test("initData логинит игрока Telegram", async () => {
   assert.equal(session.json.dev, false);
 });
 
+test("дубликат окраса даёт осколки, бокс тратит заряд", async () => {
+  const { tx, saveUser } = await import("../src/store.js");
+  const { mustUser, giveSkin, openBox } = await import("../src/progress.js");
+  await tx(() => {
+    const user = mustUser(10001);
+    assert.equal(giveSkin(user, "honey"), true);
+    assert.equal(giveSkin(user, "honey"), false);
+    assert.ok(user.data.skinState.honey.shards >= 1);
+    user.data.boxCharges = 1;
+    const drop = openBox(user);
+    assert.equal(user.data.boxCharges, 0);
+    assert.ok(drop.id);
+    saveUser(user);
+  });
+});
+
 test("без dev-режима браузер не входит", async () => {
   process.env.DEV_MODE = "0";
   const denied = await api("/api/session", { devId: 5 }, "");

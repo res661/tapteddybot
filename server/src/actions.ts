@@ -3,16 +3,20 @@ import {
   buyCard,
   buySkinCoins,
   buyUpgrade,
+  claimAchievement,
   claimBank,
   claimCombo,
   claimPass,
   claimStreak,
+  claimTask,
   commit,
   createClan,
   ctxFor,
   equipSkin,
   joinClan,
   leaveClan,
+  openBox,
+  upgradeSkin,
   maybeRollover,
   mustUser,
   prepare,
@@ -34,18 +38,23 @@ export type GameAction =
   | { type: "combo" }
   | { type: "equip"; skinId: string }
   | { type: "buy_skin"; skinId: string }
+  | { type: "upgrade_skin"; skinId: string }
+  | { type: "open_box" }
+  | { type: "claim_task"; taskId: string }
+  | { type: "claim_achievement" }
   | { type: "use_token" }
   | { type: "claim_pass" }
   | { type: "clan_create"; name: string; chat: ChatLink | null }
   | { type: "clan_join"; code: string }
   | { type: "clan_leave" };
 
-export function perform(userId: number, action: GameAction, now = Date.now()): { state: FullDTO; message: string } {
+export function perform(userId: number, action: GameAction, now = Date.now()): { state: FullDTO; message: string; drop?: ReturnType<typeof openBox> } {
   maybeRollover(now);
   const user = mustUser(userId);
   const ctx = ctxFor(user);
   prepare(ctx, now, { active: true });
   let message = "Готово";
+  let drop: ReturnType<typeof openBox> | undefined;
   switch (action.type) {
     case "upgrade":
       buyUpgrade(ctx, action.kind);
@@ -86,6 +95,22 @@ export function perform(userId: number, action: GameAction, now = Date.now()): {
       buySkinCoins(user, action.skinId);
       message = "Окрас куплен";
       break;
+    case "upgrade_skin":
+      upgradeSkin(user, action.skinId);
+      message = "Окрас стал сильнее";
+      break;
+    case "open_box":
+      drop = openBox(user);
+      message = drop.duplicate ? `${drop.name}: +${drop.shards} осколков` : `Новый окрас: ${drop.name}`;
+      break;
+    case "claim_task":
+      claimTask(user, action.taskId, now);
+      message = "Задание сдано";
+      break;
+    case "claim_achievement":
+      claimAchievement(user);
+      message = "Ачивка забрана";
+      break;
     case "use_token":
       useTankToken(user, now);
       message = "Бак полон";
@@ -111,5 +136,5 @@ export function perform(userId: number, action: GameAction, now = Date.now()): {
   }
   qualifyReferral(user, now);
   commit(ctx);
-  return { state: present(mustUser(userId), now), message };
+  return { state: present(mustUser(userId), now), message, drop };
 }

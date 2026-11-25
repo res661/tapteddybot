@@ -1,8 +1,11 @@
 import crypto from "node:crypto";
-import { FREE_TRACK, PAID_TRACK, cardById, skinById } from "./catalog.js";
+import { FREE_TRACK, PAID_TRACK, SKINS, cardById, skinById } from "./catalog.js";
 import { config } from "./config.js";
 import {
+  ACHIEVEMENTS,
+  BOX_EVERY,
   DAY,
+  TASKS,
   boostMult,
   canSaveStreak,
   cardUpgradeCost,
@@ -23,9 +26,14 @@ import {
   passiveCapMs,
   passivePerHour,
   passLevelFromXp,
+  rarityFromRoll,
   regenEnergy,
   regenUpgradeCost,
   seasonId,
+  shardsOnDuplicate,
+  skinMods,
+  skinUpgradeCoins,
+  skinUpgradeShards,
   streakReward,
   tapValue,
   utcDay,
@@ -66,6 +74,21 @@ export interface TapResult {
   accepted: number;
   coins: number;
   perTap: number;
+  crits: number;
+  combo: number;
+  boxes: number;
+  levelUp: boolean;
+}
+
+export interface DropInfo {
+  id: string;
+  name: string;
+  rarity: string;
+  duplicate: boolean;
+  shards: number;
+  filter: string;
+  accessory: string;
+  backdrop: string;
 }
 
 export function ctxFor(user: User): Ctx {
@@ -100,9 +123,11 @@ export function grantXp(user: User, amount: number): void {
     }
     if (user.level >= 30 && !user.data.veteranGranted) {
       user.data.veteranGranted = true;
-      if (!user.data.skins.includes("veteran")) user.data.skins.push("veteran");
+      giveSkin(user, "veteran");
       if (!user.data.badges.includes("veteran")) user.data.badges.push("veteran");
     }
+    if (user.level === 10) giveSkin(user, "berry");
+    if (user.level === 20) giveSkin(user, "storm");
   }
 }
 
@@ -184,7 +209,7 @@ function addReferralCut(user: User, amount: number, now: number): void {
 function applyMilestones(ref: User, qualified: number): void {
   if (qualified >= 5 && !ref.data.badges.includes("hive")) ref.data.badges.push("hive");
   if (qualified >= 10 && !ref.data.frames.includes("friends")) ref.data.frames.push("friends");
-  if (qualified >= 25 && !ref.data.skins.includes("conductor")) ref.data.skins.push("conductor");
+  if (qualified >= 25) giveSkin(ref, "conductor");
 }
 
 export function qualifyReferral(user: User, now: number): void {
@@ -264,7 +289,19 @@ function accrueBank(ctx: Ctx, now: number): void {
   data.passiveAt = now;
 }
 
-export function applyTapCount(ctx: Ctx, requested: number, now: number, opts: { ignoreBucket?: boolean; skipRegen?: boolean }): TapResult {
+function rollDailyTasks(user: User, now: number): void {
+  const today = utcDay(now);
+  if (user.data.taskDay === today) return;
+  user.data.taskDay = today;
+  user.data.taskTaps = 0;
+  user.data.taskBestCombo = 0;
+  user.data.taskStreak = false;
+  user.data.taskUpgrade = false;
+  user.data.taskClaimed = [];
+}
+
+export function applyTapCount(ctx: Ctx, requested: number, now: number, opts: { ignoreBucket?: boolean; skipRegen?: boolean; combo?: boolean }): TapResult {
+  const empty = { accepted: 0, coins: 0, perTap: tapValue(ctx.user, ctx.clan, now), crits: 0, combo: ctx.user.data.combo ?? 0, boxes: 0, levelUp: false };
   if (!opts.skipRegen) regenEnergy(ctx.user, now);
   let accepted = Math.max(0, Math.floor(requested));
   if (!opts.ignoreBucket) {
@@ -278,11 +315,30 @@ export function applyTapCount(ctx: Ctx, requested: number, now: number, opts: { 
     ctx.user.data.tapTokens = Math.min(TAP_BURST, ctx.user.data.tapTokens + (accepted - affordable));
   }
   accepted = affordable;
-  const perTap = tapValue(ctx.user, ctx.clan, now);
-  if (accepted <= 0) return { accepted: 0, coins: 0, perTap };
-  const coins = accepted * perTap;
+  if (accepted <= 0) return empty;
+  rollDailyTasks(ctx.user, now);
+  const useCombo = opts.combo !== false;
+  if (useCombo && now - (ctx.user.data.comboAt || 0) > 2500) ctx.user.data.combo = 0;
+  const critChance = skinMods(ctx.user).crit;
+  let coins = 0;
+  let crits = 0;
+  let perTap = 1;
+  for (let i = 0; i < accepted; i++) {
+    if (useCombo) {
+      ctx.user.data.combo += 1;
+      ctx.user.data.comboAt = now;
+      if (ctx.user.data.combo > ctx.user.data.bestCombo) ctx.user.data.bestCombo = ctx.user.data.combo;
+      if (ctx.user.data.combo > ctx.user.data.taskBestCombo) ctx.user.data.taskBestCombo = ctx.user.data.combo;
+    }
+    perTap = tapValue(ctx.user, ctx.clan, now);
+    const crit = critChance > 0 && Math.random() < critChance;
+    if (crit) crits += 1;
+    coins += crit ? perTap * 3 : perTap;
+  }
+  const levelBefore = ctx.user.level;
   ctx.user.data.energy -= accepted;
   ctx.user.data.tapCount += accepted;
+  ctx.user.data.taskTaps += accepted;
   ctx.user.data.energySpentMod += accepted;
   const cap = Math.max(1, energyCap(ctx.user, now));
   const chunks = Math.floor(ctx.user.data.energySpentMod / cap);
@@ -290,10 +346,24 @@ export function applyTapCount(ctx: Ctx, requested: number, now: number, opts: { 
     ctx.user.data.passXp += chunks * 10;
     ctx.user.data.energySpentMod -= chunks * cap;
   }
+  const boxesBefore = ctx.user.data.boxCharges;
+  ctx.user.data.boxProgress += accepted;
+  while (ctx.user.data.boxProgress >= BOX_EVERY && ctx.user.data.boxCharges < 5) {
+    ctx.user.data.boxProgress -= BOX_EVERY;
+    ctx.user.data.boxCharges += 1;
+  }
   credit(ctx.user, coins, "play");
   addClanPoints(ctx, coins);
   addReferralCut(ctx.user, coins, now);
-  return { accepted, coins, perTap };
+  return {
+    accepted,
+    coins,
+    perTap,
+    crits,
+    combo: ctx.user.data.combo,
+    boxes: ctx.user.data.boxCharges - boxesBefore,
+    levelUp: ctx.user.level > levelBefore,
+  };
 }
 
 function runAutopilot(ctx: Ctx, now: number): void {
@@ -312,7 +382,7 @@ function runAutopilot(ctx: Ctx, now: number): void {
     const cap = energyCap(ctx.user, t);
     let spend = gained;
     if (gained <= 0 && ctx.user.data.energy >= cap) spend = ctx.user.data.energy;
-    if (spend > 0) applyTapCount(ctx, spend, t, { ignoreBucket: true, skipRegen: true });
+    if (spend > 0) applyTapCount(ctx, spend, t, { ignoreBucket: true, skipRegen: true, combo: false });
   }
   ctx.user.data.autopilotAt = t;
   if (now >= until) ctx.user.data.autopilotUntil = 0;
@@ -352,6 +422,7 @@ function runAutotap(ctx: Ctx, now: number): void {
 
 export function prepare(ctx: Ctx, now: number, opts?: { active?: boolean }): void {
   ensureUserClock(ctx.user, now);
+  rollDailyTasks(ctx.user, now);
   if (opts?.active) ctx.user.data.autotapLastClient = now;
   runAutopilot(ctx, now);
   regenEnergy(ctx.user, now);
@@ -365,7 +436,7 @@ export function syncUser(userId: number, input: { taps: number; batchId: string;
   const ctx = ctxFor(user);
   const duplicate = Boolean(input.batchId) && user.data.batches.includes(input.batchId);
   prepare(ctx, now, { active: input.active });
-  let gained: TapResult = { accepted: 0, coins: 0, perTap: tapValue(user, ctx.clan, now) };
+  let gained: TapResult = { accepted: 0, coins: 0, perTap: tapValue(user, ctx.clan, now), crits: 0, combo: user.data.combo ?? 0, boxes: 0, levelUp: false };
   const manual = !duplicate && input.taps > 0 && ctx.user.data.autotapUntil <= now;
   if (manual) {
     const taps = Math.max(0, Math.min(40, Math.floor(input.taps)));
@@ -398,6 +469,7 @@ export function buyUpgrade(ctx: Ctx, kind: "multitap" | "energy" | "regen"): voi
     const cost = multitapCost(user.data.multitap);
     spend(user, cost);
     user.data.multitap += 1;
+    user.data.taskUpgrade = true;
     return;
   }
   if (kind === "energy") {
@@ -405,12 +477,14 @@ export function buyUpgrade(ctx: Ctx, kind: "multitap" | "energy" | "regen"): voi
     const cost = energyUpgradeCost(user.data.energyLevel);
     spend(user, cost);
     user.data.energyLevel += 1;
+    user.data.taskUpgrade = true;
     return;
   }
   if (user.data.regenLevel >= 20) throw new GameError("Реген прокачан до потолка");
   const cost = regenUpgradeCost(user.data.regenLevel);
   spend(user, cost);
   user.data.regenLevel += 1;
+  user.data.taskUpgrade = true;
 }
 
 export function buyCard(ctx: Ctx, cardId: string, now: number): void {
@@ -430,6 +504,7 @@ export function buyCard(ctx: Ctx, cardId: string, now: number): void {
     day: today,
     dayLevels: (sameDay ? prev?.dayLevels ?? 0 : 0) + 1,
   };
+  user.data.taskUpgrade = true;
 }
 
 export function claimStreak(ctx: Ctx, now: number): void {
@@ -446,6 +521,8 @@ export function claimStreak(ctx: Ctx, now: number): void {
     user.data.frame = "week";
     user.data.frameUntil = now + 7 * DAY;
   }
+  if ((day === 3 || day === 7) && user.data.boxCharges < 5) user.data.boxCharges += 1;
+  user.data.taskStreak = true;
   user.data.passXp += 100;
   user.data.streakDay = day;
   user.data.streakLast = today;
@@ -525,8 +602,9 @@ export function buySkinCoins(user: User, skinId: string): void {
   if (user.data.skins.includes(skinId)) throw new GameError("Окрас уже куплен");
   if (user.level < skin.minLevel) throw new GameError(`Окрас откроется на ${skin.minLevel} уровне`);
   spend(user, skin.price);
-  user.data.skins.push(skinId);
+  giveSkin(user, skinId);
   user.skinId = skinId;
+  user.data.taskUpgrade = true;
 }
 
 export function useTankToken(user: User, now: number): void {
@@ -550,7 +628,7 @@ function applyFreeReward(user: User, level: number, now: number): void {
     user.data.seasonEnergyBonusSeason = seasonId(now);
   }
   if (level === 20) credit(user, 25_000, "reward");
-  if (level === 25 && !user.data.skins.includes("cream")) user.data.skins.push("cream");
+  if (level === 25) giveSkin(user, "cream");
   if (level === 30 && !user.data.badges.includes("lvl30")) user.data.badges.push("lvl30");
 }
 
@@ -558,10 +636,10 @@ function applyPaidReward(user: User, level: number, now: number): void {
   if (!(level in PAID_TRACK)) return;
   if (level === 1) credit(user, 15_000, "stars");
   if (level === 3) user.data.freezes.push({ exp: now + 7 * DAY });
-  if (level === 5 && !user.data.skins.includes("maple")) user.data.skins.push("maple");
+  if (level === 5) giveSkin(user, "maple");
   if (level === 10) user.data.tankTokens = Math.min(5, user.data.tankTokens + 2);
   if (level === 12) extendTimer(user, "autopilotUntil", 6 * 3_600_000, now);
-  if (level === 15 && !user.data.skins.includes("legend")) user.data.skins.push("legend");
+  if (level === 15) giveSkin(user, "legend");
   if (level === 25) user.data.nameColor = user.data.nameColor ?? "honey";
   if (level === 30) {
     if (!user.data.badges.includes("season")) user.data.badges.push("season");
@@ -786,9 +864,78 @@ export function noteFriendPurchase(user: User, now: number): void {
 }
 
 export function giveSkin(user: User, id: string): boolean {
-  if (user.data.skins.includes(id)) return false;
-  user.data.skins.push(id);
+  const def = skinById(id);
+  if (!def) return false;
+  if (!user.data.skinState) user.data.skinState = {};
+  const owned = user.data.skinState[id];
+  if (owned) {
+    owned.shards += shardsOnDuplicate(def.rarity);
+    return false;
+  }
+  user.data.skinState[id] = { level: 1, shards: 0 };
+  if (!user.data.skins.includes(id)) user.data.skins.push(id);
   return true;
+}
+
+export function openBox(user: User): DropInfo {
+  if (user.data.boxCharges <= 0) throw new GameError("Плюшевый бокс ещё не заряжен");
+  user.data.boxCharges -= 1;
+  user.data.boxesOpened += 1;
+  const rarity = rarityFromRoll(crypto.randomInt(0, 10000));
+  let pool = SKINS.filter((item) => item.drop && item.rarity === rarity);
+  if (!pool.length) pool = SKINS.filter((item) => item.drop);
+  const picked = pool[crypto.randomInt(0, pool.length)];
+  if (!picked) throw new GameError("Бокс пуст");
+  const fresh = giveSkin(user, picked.id);
+  return {
+    id: picked.id,
+    name: picked.name,
+    rarity: picked.rarity,
+    duplicate: !fresh,
+    shards: fresh ? 0 : shardsOnDuplicate(picked.rarity),
+    filter: picked.filter,
+    accessory: picked.accessory,
+    backdrop: picked.backdrop,
+  };
+}
+
+export function upgradeSkin(user: User, skinId: string): void {
+  const def = skinById(skinId);
+  const state = user.data.skinState?.[skinId];
+  if (!def || !state) throw new GameError("Сначала получи этот окрас");
+  if (state.level >= 10) throw new GameError("Окрас на максимуме");
+  const need = skinUpgradeShards(state.level);
+  const cost = skinUpgradeCoins(def.rarity, state.level);
+  if (state.shards < need) throw new GameError(`Нужно осколков: ${need}`);
+  spend(user, cost);
+  state.shards -= need;
+  state.level += 1;
+  user.data.taskUpgrade = true;
+}
+
+export function claimTask(user: User, taskId: string, now: number): void {
+  rollDailyTasks(user, now);
+  const task = TASKS.find((item) => item.id === taskId);
+  if (!task) throw new GameError("Нет такого задания");
+  if (user.data.taskClaimed.includes(taskId)) throw new GameError("Уже забрано");
+  const value = task.kind === "taps" ? user.data.taskTaps : task.kind === "combo" ? user.data.taskBestCombo : task.kind === "streak" ? (user.data.taskStreak ? 1 : 0) : user.data.taskUpgrade ? 1 : 0;
+  if (value < task.goal) throw new GameError("Задание ещё не готово");
+  user.data.taskClaimed.push(taskId);
+  if (task.coins) credit(user, task.coins, "reward");
+  if (task.box) user.data.boxCharges = Math.min(5, user.data.boxCharges + task.box);
+}
+
+export function claimAchievement(user: User): void {
+  let got = 0;
+  for (const item of ACHIEVEMENTS) {
+    if (user.data.achClaimed.includes(item.id)) continue;
+    const value = item.stat === "taps" ? user.data.tapCount : item.stat === "level" ? user.level : item.stat === "skins" ? user.data.skins.length : item.stat === "boxes" ? user.data.boxesOpened : user.clanId ? 1 : 0;
+    if (value < item.goal) continue;
+    user.data.achClaimed.push(item.id);
+    credit(user, item.coins, "reward");
+    got += 1;
+  }
+  if (got === 0) throw new GameError("Пока нечего забирать");
 }
 
 export function ownedOffer(user: User, id: string): boolean {

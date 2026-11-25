@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { CARDS, type CardDef } from "./catalog.js";
+import { CARDS, skinById, type CardDef, type Rarity } from "./catalog.js";
 import type { Clan, User } from "./types.js";
 
 export const DAY = 86_400_000;
@@ -77,6 +77,20 @@ export function hasPass(user: User, now: number): boolean {
   return user.data.passSeason !== 0 && user.data.passSeason === seasonId(now);
 }
 
+export function skinMods(user: User): { tap: number; energy: number; regen: number; crit: number; offline: number } {
+  const id = user.skinId || "classic";
+  const def = skinById(id);
+  const level = user.data.skinState?.[id]?.level ?? 0;
+  if (!def || level <= 0) return { tap: 0, energy: 0, regen: 0, crit: 0, offline: 0 };
+  return {
+    tap: def.bonus.tap * level,
+    energy: def.bonus.energy * level,
+    regen: def.bonus.regen * level,
+    crit: Math.min(0.35, def.bonus.crit * level),
+    offline: def.bonus.offline * level,
+  };
+}
+
 export function energyCap(user: User, now: number): number {
   let bonus = user.data.bonusEnergy;
   if (user.data.seasonEnergyBonusSeason === seasonId(now)) bonus += user.data.seasonEnergyBonus;
@@ -84,7 +98,7 @@ export function energyCap(user: User, now: number): number {
   for (const card of CARDS) {
     if (card.kind === "energy") extra += card.base * cardLevel(user, card.id);
   }
-  return 2000 + 250 * (user.data.energyLevel - 1) + 20 * (user.level - 1) + bonus + extra;
+  return 2000 + 250 * (user.data.energyLevel - 1) + 20 * (user.level - 1) + bonus + extra + skinMods(user).energy;
 }
 
 export function tapCardFraction(user: User): number {
@@ -108,7 +122,7 @@ export function passivePerHour(user: User): number {
   for (const card of CARDS) {
     if (card.kind === "income") sum += card.base * cardLevel(user, card.id);
   }
-  return sum;
+  return Math.floor(sum * (1 + skinMods(user).offline));
 }
 
 export function boostMult(user: User, clan: Clan | null, now: number): number {
@@ -120,14 +134,19 @@ export function boostMult(user: User, clan: Clan | null, now: number): number {
   return x2 * pass * (1 + clanAdd);
 }
 
-export function tapValue(user: User, clan: Clan | null, now: number): number {
-  const raw = user.data.multitap * (1 + tapCardFraction(user)) * boostMult(user, clan, now);
+export function comboBonus(combo: number): number {
+  return Math.min(0.5, Math.floor(Math.max(0, combo) / 10) * 0.05);
+}
+
+export function tapValue(user: User, clan: Clan | null, now: number, combo = user.data.combo ?? 0): number {
+  const raw = user.data.multitap * (1 + tapCardFraction(user) + skinMods(user).tap) * boostMult(user, clan, now) * (1 + comboBonus(combo));
   return Math.max(1, Math.floor(raw));
 }
 
 export function regenIntervalMs(user: User): number {
   let rate = 0.5 * (1 + 0.04 * (user.data.regenLevel - 1));
   rate *= 1 + regenCardFraction(user);
+  rate *= 1 + skinMods(user).regen;
   return Math.max(REGEN_MIN_MS, Math.round(1000 / rate));
 }
 
@@ -286,3 +305,99 @@ export function currentOffer(now: number): LiveOffer | null {
 export function incomeCards(): CardDef[] {
   return CARDS.filter((c) => c.kind === "income");
 }
+
+export const BOX_EVERY = 250;
+export const BOX_ODDS: { rarity: Rarity; pct: number }[] = [
+  { rarity: "common", pct: 55 },
+  { rarity: "rare", pct: 28 },
+  { rarity: "epic", pct: 12 },
+  { rarity: "legendary", pct: 4 },
+  { rarity: "mythic", pct: 1 },
+];
+
+export function rarityFromRoll(roll: number): Rarity {
+  if (roll < 5500) return "common";
+  if (roll < 8300) return "rare";
+  if (roll < 9500) return "epic";
+  if (roll < 9900) return "legendary";
+  return "mythic";
+}
+
+export function shardsOnDuplicate(rarity: Rarity): number {
+  switch (rarity) {
+    case "common":
+      return 1;
+    case "rare":
+      return 2;
+    case "epic":
+      return 4;
+    case "legendary":
+      return 8;
+    default:
+      return 16;
+  }
+}
+
+const UPGRADE_COIN: Record<Rarity, number> = { common: 400, rare: 900, epic: 2000, legendary: 5000, mythic: 12000 };
+
+export function skinUpgradeShards(level: number): number {
+  return level;
+}
+
+export function skinUpgradeCoins(rarity: Rarity, level: number): number {
+  return Math.floor(UPGRADE_COIN[rarity] * level);
+}
+
+export const LEAGUES = [
+  { id: "bronze", name: "Бронза", min: 0 },
+  { id: "silver", name: "Серебро", min: 5_000 },
+  { id: "gold", name: "Золото", min: 25_000 },
+  { id: "platinum", name: "Платина", min: 100_000 },
+  { id: "diamond", name: "Алмаз", min: 400_000 },
+] as const;
+
+export function leagueOf(weekScore: number): { id: string; name: string; min: number; next: number | null } {
+  let current: { id: string; name: string; min: number } = LEAGUES[0];
+  for (const league of LEAGUES) {
+    if (weekScore >= league.min) current = league;
+  }
+  const index = LEAGUES.findIndex((league) => league.id === current.id);
+  const next = LEAGUES[index + 1]?.min ?? null;
+  return { ...current, next };
+}
+
+export interface TaskDef {
+  id: string;
+  title: string;
+  kind: "taps" | "combo" | "streak" | "upgrade";
+  goal: number;
+  coins?: number;
+  box?: number;
+}
+
+export const TASKS: TaskDef[] = [
+  { id: "tap_100", title: "100 тапов за день", kind: "taps", goal: 100, coins: 500 },
+  { id: "tap_500", title: "500 тапов за день", kind: "taps", goal: 500, box: 1 },
+  { id: "combo_30", title: "Комбо 30", kind: "combo", goal: 30, coins: 800 },
+  { id: "streak", title: "Забрать серию", kind: "streak", goal: 1, coins: 300 },
+  { id: "upgrade", title: "Улучшить карту или скин", kind: "upgrade", goal: 1, coins: 700 },
+];
+
+export interface AchievementDef {
+  id: string;
+  title: string;
+  stat: "taps" | "level" | "skins" | "boxes" | "clan";
+  goal: number;
+  coins: number;
+}
+
+export const ACHIEVEMENTS: AchievementDef[] = [
+  { id: "taps_1k", title: "Тысяча лап", stat: "taps", goal: 1_000, coins: 2_000 },
+  { id: "taps_10k", title: "Десять тысяч", stat: "taps", goal: 10_000, coins: 15_000 },
+  { id: "lvl_10", title: "Десятый уровень", stat: "level", goal: 10, coins: 5_000 },
+  { id: "lvl_20", title: "Двадцатый", stat: "level", goal: 20, coins: 20_000 },
+  { id: "skins_5", title: "Пять окрасов", stat: "skins", goal: 5, coins: 3_000 },
+  { id: "skins_15", title: "Коллекция", stat: "skins", goal: 15, coins: 20_000 },
+  { id: "boxes_5", title: "Пять боксов", stat: "boxes", goal: 5, coins: 4_000 },
+  { id: "clan", title: "Свой клан", stat: "clan", goal: 1, coins: 2_500 },
+];

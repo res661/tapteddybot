@@ -180,6 +180,20 @@ export function freshData(now: number): UserData {
     batches: [],
     cards: {},
     skins: ["classic"],
+    skinState: { classic: { level: 1, shards: 0 } },
+    combo: 0,
+    comboAt: 0,
+    bestCombo: 0,
+    boxCharges: 0,
+    boxProgress: 0,
+    boxesOpened: 0,
+    taskDay: "",
+    taskTaps: 0,
+    taskBestCombo: 0,
+    taskStreak: false,
+    taskUpgrade: false,
+    taskClaimed: [],
+    achClaimed: [],
     offers: [],
     level5Granted: false,
     veteranGranted: false,
@@ -192,6 +206,13 @@ function normalizeData(raw: Partial<UserData> | null, now: number): UserData {
   data.cards = raw?.cards ?? {};
   data.skins = raw?.skins?.length ? raw.skins : ["classic"];
   if (!data.skins.includes("classic")) data.skins.unshift("classic");
+  data.skinState = { ...(raw?.skinState ?? {}) };
+  for (const id of data.skins) {
+    if (!data.skinState[id]) data.skinState[id] = { level: 1, shards: 0 };
+  }
+  if (!data.skinState.classic) data.skinState.classic = { level: 1, shards: 0 };
+  data.taskClaimed = Array.isArray(raw?.taskClaimed) ? raw.taskClaimed : [];
+  data.achClaimed = Array.isArray(raw?.achClaimed) ? raw.achClaimed : [];
   data.freezes = Array.isArray(raw?.freezes) ? raw.freezes : [];
   data.batches = Array.isArray(raw?.batches) ? raw.batches : [];
   data.badges = Array.isArray(raw?.badges) ? raw.badges : [];

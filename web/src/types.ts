@@ -1,4 +1,4 @@
-export type Tab = "tap" | "upgrades" | "shop" | "clan" | "top" | "friends";
+export type Tab = "tap" | "skins" | "boosts" | "tasks" | "top";
 
 export interface GameState {
   now: number;
@@ -25,6 +25,8 @@ export interface GameState {
     tankTokens: number;
     createdAt: number;
     tapCount: number;
+    combo: number;
+    crit: number;
   };
   streak: {
     day: number;
@@ -88,12 +90,26 @@ export interface GameState {
     price: number;
     currency: string;
     rarity: string;
+    accessory: string;
+    backdrop: string;
+    level: number;
+    shards: number;
+    bonus: string;
+    nextBonus: string;
+    upgradeCoins: number | null;
+    upgradeShards: number | null;
     owned: boolean;
     equipped: boolean;
     locked: boolean;
     minLevel: number;
     shop: boolean;
+    drop: boolean;
   }[];
+  collection: { owned: number; total: number; pct: number };
+  box: { charges: number; progress: number; goal: number; odds: { rarity: string; pct: number }[] };
+  tasks: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; reward: string }[];
+  achievements: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; coins: number }[];
+  league: { id: string; name: string; min: number; next: number | null; score: number };
   products: { sku: string; group: string; title: string; description: string; stars: number | null; reason?: string }[];
   newbie: { available: boolean; until: number } | null;
   offer: { id: string; title: string; description: string; stars: number; until: number } | null;
@@ -143,13 +159,15 @@ export interface LiteState {
     tankTokens: number;
     multitap: number;
     boost: number;
+    combo: number;
   };
   passive: GameState["passive"];
   timers: GameState["timers"];
   clanBuff: GameState["clanBuff"];
   refill: GameState["refill"];
   streak: { day: number; claimedToday: boolean; canSave: boolean; freezes: number };
-  gained: { taps: number; coins: number; perTap: number };
+  box: { charges: number; progress: number };
+  gained: { taps: number; coins: number; perTap: number; crits: number; combo: number; boxes: number; levelUp: boolean };
 }
 
 export interface BoardResponse {

@@ -74,7 +74,13 @@ function readAction(body: Record<string, unknown>): GameAction {
     case "equip":
       return { type, skinId: String(body.skinId ?? "") };
     case "buy_skin":
+    case "upgrade_skin":
       return { type, skinId: String(body.skinId ?? "") };
+    case "open_box":
+    case "claim_achievement":
+      return { type };
+    case "claim_task":
+      return { type, taskId: String(body.taskId ?? "") };
     case "clan_join":
       return { type, code: String(body.code ?? "") };
     default:

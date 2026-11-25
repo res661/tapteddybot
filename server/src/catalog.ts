@@ -104,6 +104,18 @@ export function cardById(id: string): CardDef | undefined {
   return CARDS.find((c) => c.id === id);
 }
 
+export type Rarity = "common" | "rare" | "epic" | "legendary" | "mythic";
+export type Accessory = "none" | "bow" | "crown" | "scarf" | "glasses" | "halo" | "star" | "flower" | "moon" | "honey" | "cape" | "bell" | "leaf" | "heart" | "patch" | "hood";
+export type Backdrop = "none" | "glow" | "dots" | "rings" | "night" | "snow" | "honey" | "aurora" | "plaid";
+
+export interface SkinBonus {
+  tap: number;
+  energy: number;
+  regen: number;
+  crit: number;
+  offline: number;
+}
+
 export interface SkinDef {
   id: string;
   name: string;
@@ -112,26 +124,93 @@ export interface SkinDef {
   currency: "free" | "coins" | "stars" | "reward";
   price: number;
   minLevel: number;
-  rarity: "common" | "rare" | "legend" | "special";
+  rarity: Rarity;
   shop: boolean;
+  accessory: Accessory;
+  backdrop: Backdrop;
+  bonus: SkinBonus;
+  drop: boolean;
+}
+
+const Z: SkinBonus = { tap: 0, energy: 0, regen: 0, crit: 0, offline: 0 };
+
+function skin(
+  id: string,
+  name: string,
+  blurb: string,
+  filter: string,
+  rarity: Rarity,
+  accessory: Accessory,
+  backdrop: Backdrop,
+  bonus: Partial<SkinBonus>,
+  opts: { coins?: number; stars?: number; reward?: boolean; drop?: boolean; minLevel?: number } = {},
+): SkinDef {
+  const currency = opts.reward ? "reward" : opts.stars ? "stars" : opts.coins ? "coins" : "free";
+  return {
+    id,
+    name,
+    blurb,
+    filter,
+    currency,
+    price: opts.stars ?? opts.coins ?? 0,
+    minLevel: opts.minLevel ?? 1,
+    rarity,
+    shop: currency === "free" || currency === "coins" || currency === "stars",
+    accessory,
+    backdrop,
+    bonus: { ...Z, ...bonus },
+    drop: Boolean(opts.drop),
+  };
 }
 
 export const SKINS: SkinDef[] = [
-  { id: "classic", name: "Классика", blurb: "Тот самый мишка", filter: "", currency: "free", price: 0, minLevel: 1, rarity: "common", shop: true },
-  { id: "honey", name: "Медовый", blurb: "Тёплый карамельный оттенок", filter: "sepia(0.55) saturate(1.8) brightness(1.08)", currency: "coins", price: 5000, minLevel: 1, rarity: "common", shop: true },
-  { id: "cream", name: "Сливочный", blurb: "Светлая плюшевая шубка", filter: "brightness(1.45) saturate(0.35) sepia(0.25)", currency: "coins", price: 8000, minLevel: 2, rarity: "common", shop: true },
-  { id: "cocoa", name: "Какао", blurb: "Тёмный вечерний мех", filter: "brightness(0.48) saturate(0.7) sepia(0.45)", currency: "coins", price: 15000, minLevel: 3, rarity: "common", shop: true },
-  { id: "cherry", name: "Вишня", blurb: "Румяный плюш", filter: "hue-rotate(-38deg) saturate(1.9) brightness(1.05)", currency: "coins", price: 25000, minLevel: 5, rarity: "common", shop: true },
-  { id: "forest", name: "Хвойный", blurb: "Лесной оттенок", filter: "hue-rotate(58deg) saturate(1.2) brightness(0.92)", currency: "coins", price: 40000, minLevel: 8, rarity: "common", shop: true },
-  { id: "night", name: "Полночь", blurb: "Почти тень", filter: "brightness(0.38) contrast(1.2) sepia(0.35)", currency: "coins", price: 80000, minLevel: 10, rarity: "common", shop: true },
-  { id: "firstden", name: "Первая берлога", blurb: "Из набора новичка", filter: "sepia(0.12) saturate(1.25) brightness(1.08)", currency: "reward", price: 0, minLevel: 1, rarity: "special", shop: false },
-  { id: "gold", name: "Золотой", blurb: "Только вид. К мёду не прибавляет", filter: "sepia(0.62) saturate(1.75) brightness(1.12)", currency: "stars", price: 50, minLevel: 1, rarity: "common", shop: true },
-  { id: "royal", name: "Королевский", blurb: "Редкий окрас без бонуса к доходу", filter: "hue-rotate(-10deg) saturate(1.3) contrast(1.05) brightness(1.04)", currency: "stars", price: 150, minLevel: 15, rarity: "rare", shop: true },
-  { id: "legend", name: "Легенда сезона", blurb: "Сезонный окрас. Силы не даёт", filter: "saturate(1.5) hue-rotate(-14deg) brightness(1.06)", currency: "stars", price: 350, minLevel: 1, rarity: "legend", shop: true },
-  { id: "maple", name: "Кленовый", blurb: "Награда платной дорожки", filter: "hue-rotate(-6deg) sepia(0.35) saturate(1.4) brightness(1.05)", currency: "reward", price: 0, minLevel: 1, rarity: "rare", shop: false },
-  { id: "conductor", name: "Проводник", blurb: "За 25 друзей, которые играют", filter: "hue-rotate(14deg) saturate(1.2) brightness(1.04)", currency: "reward", price: 0, minLevel: 1, rarity: "special", shop: false },
-  { id: "veteran", name: "Ветеран", blurb: "Открывается на 30 уровне", filter: "sepia(0.4) contrast(1.08) hue-rotate(-8deg)", currency: "reward", price: 0, minLevel: 30, rarity: "special", shop: false },
+  skin("classic", "Классика", "Тот самый мишка", "", "common", "none", "none", {}),
+  skin("honey", "Медовый", "Карамель на лапах", "sepia(.55) saturate(1.8) brightness(1.08)", "common", "honey", "honey", { tap: 0.01 }, { coins: 4000 }),
+  skin("cream", "Сливочный", "Светлый плюш", "brightness(1.45) saturate(.35) sepia(.25)", "common", "bow", "glow", { offline: 0.02 }, { coins: 6000, minLevel: 2 }),
+  skin("cocoa", "Какао", "Тёмный вечерний мех", "brightness(.48) saturate(.7) sepia(.45)", "common", "patch", "plaid", { energy: 12 }, { coins: 8000, minLevel: 3 }),
+  skin("ribbon", "Бантик", "Праздничная лента", "saturate(1.15) brightness(1.05)", "common", "bow", "dots", { tap: 0.012 }, { drop: true }),
+  skin("patch", "Заплатка", "Любимая штопка", "sepia(.2) contrast(1.05)", "common", "patch", "plaid", { regen: 0.012 }, { drop: true }),
+  skin("cookie", "Печенька", "Крошки на животе", "sepia(.35) saturate(1.3)", "common", "heart", "honey", { offline: 0.015 }, { drop: true }),
+  skin("denim", "Джинс", "Курточка с заплаткой", "hue-rotate(18deg) saturate(.7) brightness(.95)", "common", "hood", "dots", { energy: 18 }, { coins: 10000, minLevel: 4 }),
+  skin("sand", "Песочный", "Пляж и тёплый бок", "sepia(.25) brightness(1.12) saturate(.8)", "common", "flower", "glow", { regen: 0.01 }, { drop: true }),
+  skin("button", "Пуговица", "Одна блестящая", "contrast(1.08)", "common", "bell", "dots", { crit: 0.004 }, { drop: true }),
+  skin("cherry", "Вишня", "Румяный плюш", "hue-rotate(-38deg) saturate(1.9)", "rare", "bow", "glow", { tap: 0.02 }, { coins: 25000, minLevel: 5 }),
+  skin("forest", "Хвойный", "Лесной оттенок", "hue-rotate(58deg) saturate(1.15)", "rare", "leaf", "dots", { regen: 0.02 }, { coins: 30000, minLevel: 6 }),
+  skin("berry", "Ягодный", "Сок на носу", "hue-rotate(-20deg) saturate(1.6)", "rare", "flower", "glow", { crit: 0.01 }, { drop: true }),
+  skin("sailor", "Морячок", "Полоска и воротник", "hue-rotate(12deg) saturate(.85)", "rare", "scarf", "rings", { energy: 40 }, { drop: true }),
+  skin("mint", "Мятный", "Прохладный плюш", "hue-rotate(80deg) saturate(.9) brightness(1.05)", "rare", "leaf", "glow", { offline: 0.03 }, { coins: 35000, minLevel: 8 }),
+  skin("dusk", "Сумерки", "Сиреневый вечер", "hue-rotate(-8deg) brightness(.8) saturate(1.2)", "rare", "moon", "night", { tap: 0.018 }, { drop: true }),
+  skin("plum", "Слива", "Глубокий фиолет", "hue-rotate(-55deg) saturate(1.3) brightness(.9)", "rare", "heart", "glow", { crit: 0.012 }, { drop: true }),
+  skin("copper", "Медь", "Тёплый металл", "sepia(.7) saturate(1.5) hue-rotate(-8deg)", "rare", "bell", "rings", { energy: 45 }, { stars: 50, minLevel: 4 }),
+  skin("night", "Полночь", "Почти тень", "brightness(.38) contrast(1.2) sepia(.3)", "epic", "moon", "night", { tap: 0.03 }, { stars: 120, minLevel: 8 }),
+  skin("royal", "Королевский", "Мантия и корона", "hue-rotate(-12deg) saturate(1.35) contrast(1.05)", "epic", "crown", "rings", { energy: 70 }, { stars: 150, minLevel: 10 }),
+  skin("gold", "Золотой", "Блеск без случайности", "sepia(.75) saturate(1.9) brightness(1.12)", "epic", "crown", "honey", { tap: 0.025, crit: 0.008 }, { stars: 100, minLevel: 6 }),
+  skin("maple", "Кленовый", "Осенний пропуск", "hue-rotate(-6deg) sepia(.4) saturate(1.45)", "epic", "leaf", "glow", { offline: 0.04 }, { reward: true }),
+  skin("storm", "Гроза", "Искра в шерсти", "contrast(1.25) saturate(1.1) brightness(.85)", "epic", "star", "rings", { regen: 0.03 }, { drop: true }),
+  skin("aurora", "Сияние", "Северное полотно", "hue-rotate(40deg) saturate(1.5) brightness(1.05)", "epic", "halo", "aurora", { crit: 0.018 }, { drop: true }),
+  skin("legend", "Легенда", "Сезонный блеск", "saturate(1.55) hue-rotate(-14deg) brightness(1.06)", "legendary", "crown", "aurora", { tap: 0.04 }, { stars: 350, minLevel: 12 }),
+  skin("conductor", "Проводник", "За друзей, которые играют", "hue-rotate(14deg) saturate(1.25)", "legendary", "scarf", "rings", { offline: 0.05 }, { reward: true }),
+  skin("emperor", "Император", "Тяжёлая мантия", "sepia(.45) contrast(1.15) saturate(1.2)", "legendary", "cape", "rings", { energy: 110 }, { stars: 400, minLevel: 15 }),
+  skin("phoenix", "Феникс", "Тёплое перо", "sepia(.35) saturate(1.8) hue-rotate(-18deg) brightness(1.08)", "legendary", "halo", "glow", { crit: 0.028 }, { drop: true }),
+  skin("myth", "Миф", "Шёпот плюша", "contrast(1.2) saturate(1.4) hue-rotate(20deg)", "mythic", "halo", "aurora", { tap: 0.05, crit: 0.02 }, { drop: true }),
+  skin("cosmos", "Космос", "Звёзды на животе", "hue-rotate(200deg) saturate(.7) brightness(.75) contrast(1.15)", "mythic", "star", "night", { regen: 0.04, offline: 0.05 }, { stars: 800, minLevel: 20 }),
+  skin("firstden", "Первая берлога", "Из набора новичка", "sepia(.15) saturate(1.25) brightness(1.08)", "epic", "heart", "honey", { tap: 0.02, offline: 0.02 }, { reward: true }),
+  skin("veteran", "Ветеран", "30 уровень", "sepia(.4) contrast(1.08) hue-rotate(-8deg)", "legendary", "hood", "night", { tap: 0.03, energy: 40 }, { reward: true, minLevel: 30 }),
 ];
+
+export function bonusText(bonus: SkinBonus, level = 1): string {
+  const parts: string[] = [];
+  const tap = Math.round(bonus.tap * level * 1000) / 10;
+  const regen = Math.round(bonus.regen * level * 1000) / 10;
+  const crit = Math.round(bonus.crit * level * 1000) / 10;
+  const offline = Math.round(bonus.offline * level * 1000) / 10;
+  if (tap) parts.push(`+${tap}% тап`);
+  if (bonus.energy) parts.push(`+${bonus.energy * level} бак`);
+  if (regen) parts.push(`+${regen}% реген`);
+  if (crit) parts.push(`+${crit}% крит`);
+  if (offline) parts.push(`+${offline}% оффлайн`);
+  return parts.length ? parts.join(" · ") : "без бонуса";
+}
 
 export function skinById(id: string): SkinDef | undefined {
   return SKINS.find((s) => s.id === id);

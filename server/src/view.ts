@@ -1,4 +1,4 @@
-import { CATEGORIES, CARDS, FREE_TRACK, PAID_TRACK, SKINS, cardById, cardEffect } from "./catalog.js";
+import { CATEGORIES, CARDS, FREE_TRACK, PAID_TRACK, SKINS, bonusText, cardById, cardEffect } from "./catalog.js";
 import { config } from "./config.js";
 import {
   boostMult,
@@ -11,8 +11,13 @@ import {
   currentOffer,
   dailyCombo,
   energyCap,
+  ACHIEVEMENTS,
+  BOX_EVERY,
+  BOX_ODDS,
+  TASKS,
   energyUpgradeCost,
   hasPass,
+  leagueOf,
   maxMultitap,
   multitapCost,
   passiveCapMs,
@@ -22,7 +27,10 @@ import {
   regenIntervalMs,
   regenUpgradeCost,
   seasonEndsAt,
+  skinMods,
   starMtapPrice,
+  skinUpgradeCoins,
+  skinUpgradeShards,
   streakReward,
   tapCardFraction,
   tapValue,
@@ -77,6 +85,8 @@ export interface FullDTO {
     tankTokens: number;
     createdAt: number;
     tapCount: number;
+    combo: number;
+    crit: number;
   };
   streak: {
     day: number;
@@ -140,12 +150,26 @@ export interface FullDTO {
     price: number;
     currency: string;
     rarity: string;
+    accessory: string;
+    backdrop: string;
+    level: number;
+    shards: number;
+    bonus: string;
+    nextBonus: string;
+    upgradeCoins: number | null;
+    upgradeShards: number | null;
     owned: boolean;
     equipped: boolean;
     locked: boolean;
     minLevel: number;
     shop: boolean;
+    drop: boolean;
   }[];
+  collection: { owned: number; total: number; pct: number };
+  box: { charges: number; progress: number; goal: number; odds: { rarity: string; pct: number }[] };
+  tasks: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; reward: string }[];
+  achievements: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; coins: number }[];
+  league: { id: string; name: string; min: number; next: number | null; score: number };
   products: ReturnType<typeof listProducts>;
   newbie: { available: boolean; until: number } | null;
   offer: { id: string; title: string; description: string; stars: number; until: number } | null;
@@ -224,6 +248,8 @@ export function present(user: User, now: number): FullDTO {
       tankTokens: user.data.tankTokens,
       createdAt: user.createdAt,
       tapCount: user.data.tapCount,
+      combo: user.data.combo ?? 0,
+      crit: skinMods(user).crit,
     },
     streak: {
       day: user.data.streakDay,
@@ -316,20 +342,70 @@ export function present(user: User, now: number): FullDTO {
         };
       }),
     })),
-    skins: SKINS.map((skin) => ({
-      id: skin.id,
-      name: skin.name,
-      blurb: skin.blurb,
-      filter: skin.filter,
-      price: skin.price,
-      currency: skin.currency,
-      rarity: skin.rarity,
-      owned: user.data.skins.includes(skin.id),
-      equipped: user.skinId === skin.id,
-      locked: user.level < skin.minLevel,
-      minLevel: skin.minLevel,
-      shop: skin.shop,
-    })),
+    skins: SKINS.map((skin) => {
+      const owned = user.data.skinState?.[skin.id];
+      const level = owned?.level ?? 0;
+      const maxed = level >= 10;
+      return {
+        id: skin.id,
+        name: skin.name,
+        blurb: skin.blurb,
+        filter: skin.filter,
+        price: skin.price,
+        currency: skin.currency,
+        rarity: skin.rarity,
+        accessory: skin.accessory,
+        backdrop: skin.backdrop,
+        level,
+        shards: owned?.shards ?? 0,
+        bonus: bonusText(skin.bonus, Math.max(1, level)),
+        nextBonus: bonusText(skin.bonus, Math.min(10, Math.max(1, level) + 1)),
+        upgradeCoins: owned && !maxed ? skinUpgradeCoins(skin.rarity, level) : null,
+        upgradeShards: owned && !maxed ? skinUpgradeShards(level) : null,
+        owned: Boolean(owned),
+        equipped: user.skinId === skin.id,
+        locked: user.level < skin.minLevel,
+        minLevel: skin.minLevel,
+        shop: skin.shop,
+        drop: skin.drop,
+      };
+    }),
+    collection: {
+      owned: user.data.skins.length,
+      total: SKINS.length,
+      pct: Math.round((user.data.skins.length / SKINS.length) * 100),
+    },
+    box: {
+      charges: user.data.boxCharges ?? 0,
+      progress: user.data.boxProgress ?? 0,
+      goal: BOX_EVERY,
+      odds: BOX_ODDS,
+    },
+    tasks: TASKS.map((task) => {
+      const value = task.kind === "taps" ? user.data.taskTaps : task.kind === "combo" ? user.data.taskBestCombo : task.kind === "streak" ? (user.data.taskStreak ? 1 : 0) : user.data.taskUpgrade ? 1 : 0;
+      return {
+        id: task.id,
+        title: task.title,
+        goal: task.goal,
+        value,
+        done: value >= task.goal,
+        claimed: user.data.taskClaimed.includes(task.id),
+        reward: task.box ? "заряд бокса" : `${task.coins ?? 0} мёда`,
+      };
+    }),
+    achievements: ACHIEVEMENTS.map((item) => {
+      const value = item.stat === "taps" ? user.data.tapCount : item.stat === "level" ? user.level : item.stat === "skins" ? user.data.skins.length : item.stat === "boxes" ? user.data.boxesOpened : user.clanId ? 1 : 0;
+      return {
+        id: item.id,
+        title: item.title,
+        goal: item.goal,
+        value,
+        done: value >= item.goal,
+        claimed: user.data.achClaimed.includes(item.id),
+        coins: item.coins,
+      };
+    }),
+    league: { ...leagueOf(user.data.weekScore ?? 0), score: user.data.weekScore ?? 0 },
     products,
     newbie:
       !user.data.newbieBought && now - user.createdAt <= 72 * 3_600_000
@@ -407,16 +483,18 @@ export interface LiteDTO {
     tankTokens: number;
     multitap: number;
     boost: number;
+    combo: number;
   };
   passive: { bank: number; perHour: number; capHours: number };
   timers: FullDTO["timers"];
   clanBuff: FullDTO["clanBuff"];
   refill: FullDTO["refill"];
   streak: { day: number; claimedToday: boolean; canSave: boolean; freezes: number };
-  gained: { taps: number; coins: number; perTap: number };
+  box: { charges: number; progress: number };
+  gained: { taps: number; coins: number; perTap: number; crits: number; combo: number; boxes: number; levelUp: boolean };
 }
 
-export function presentLite(user: User, gained: { accepted: number; coins: number; perTap: number }, now: number): LiteDTO {
+export function presentLite(user: User, gained: { accepted: number; coins: number; perTap: number; crits?: number; combo?: number; boxes?: number; levelUp?: boolean }, now: number): LiteDTO {
   const full = present(user, now);
   return {
     now,
@@ -433,6 +511,7 @@ export function presentLite(user: User, gained: { accepted: number; coins: numbe
       tankTokens: full.me.tankTokens,
       multitap: full.me.multitap,
       boost: full.me.boost,
+      combo: full.me.combo,
     },
     passive: full.passive,
     timers: full.timers,
@@ -444,6 +523,15 @@ export function presentLite(user: User, gained: { accepted: number; coins: numbe
       canSave: full.streak.canSave,
       freezes: full.streak.freezes,
     },
-    gained: { taps: gained.accepted, coins: gained.coins, perTap: gained.perTap },
+    box: { charges: full.box.charges, progress: full.box.progress },
+    gained: {
+      taps: gained.accepted,
+      coins: gained.coins,
+      perTap: gained.perTap,
+      crits: gained.crits ?? 0,
+      combo: gained.combo ?? full.me.combo,
+      boxes: gained.boxes ?? 0,
+      levelUp: Boolean(gained.levelUp),
+    },
   };
 }

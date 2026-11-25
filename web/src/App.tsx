@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { fingerprint, request, setToken } from "./api.js";
-import { IconClan, IconFriends, IconShop, IconTap, IconTop, IconUp } from "./icons.js";
-import { ClanScreen, FriendsScreen, Sheet, ShopScreen, TapScreen, TopScreen, UpgradesScreen } from "./screens.js";
+import { IconShop, IconTap, IconTop, IconUp } from "./icons.js";
+import { BoostsScreen, SkinsScreen, TapScreen, TasksScreen, TopScreen } from "./screens.js";
 import { bootTelegram, haptic, inTelegram, telegram } from "./telegram.js";
 import type { GameState, LiteState, Tab } from "./types.js";
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "tap", label: "Тап", icon: <IconTap /> },
-  { id: "upgrades", label: "Сила", icon: <IconUp /> },
-  { id: "shop", label: "Лавка", icon: <IconShop /> },
-  { id: "clan", label: "Клан", icon: <IconClan /> },
+  { id: "skins", label: "Скины", icon: <IconShop /> },
+  { id: "boosts", label: "Бусты", icon: <IconUp /> },
+  { id: "tasks", label: "Дела", icon: <IconTop /> },
   { id: "top", label: "Топ", icon: <IconTop /> },
-  { id: "friends", label: "Друзья", icon: <IconFriends /> },
 ];
 
 function applyLite(prev: GameState, lite: LiteState, extra: number): GameState {
@@ -30,7 +29,19 @@ function applyLite(prev: GameState, lite: LiteState, extra: number): GameState {
     clanBuff: lite.clanBuff,
     refill: lite.refill,
     streak: { ...prev.streak, ...lite.streak },
+    box: { ...prev.box, ...lite.box },
   };
+}
+
+interface Drop {
+  id: string;
+  name: string;
+  rarity: string;
+  duplicate: boolean;
+  shards: number;
+  filter: string;
+  accessory: string;
+  backdrop: string;
 }
 
 export function App() {
@@ -38,15 +49,17 @@ export function App() {
   const [dev, setDev] = useState(false);
   const [tab, setTab] = useState<Tab>(() => {
     const asked = new URLSearchParams(location.search).get("tab");
-    if (asked === "upgrades" || asked === "shop" || asked === "clan" || asked === "top" || asked === "friends" || asked === "tap") return asked;
+    if (asked === "skins" || asked === "boosts" || asked === "tasks" || asked === "top" || asked === "tap") return asked;
     return "tap";
   });
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<null | "streak" | "code" | "combo" | "offline" | "newbie">(null);
   const [squish, setSquish] = useState(false);
-  const [floats, setFloats] = useState<{ id: number; n: number; x: number }[]>([]);
-  const [code, setCode] = useState("");
+  const [crit, setCrit] = useState(false);
+  const [floats, setFloats] = useState<{ id: number; n: number; x: number; crit: boolean }[]>([]);
+  const [sparks, setSparks] = useState<{ id: number; dx: string; dy: string }[]>([]);
+  const [drop, setDrop] = useState<Drop | null>(null);
+  const [levelUp, setLevelUp] = useState<number | null>(null);
   const pending = useRef(0);
   const flushing = useRef(false);
   const stateRef = useRef<GameState | null>(null);
@@ -54,7 +67,7 @@ export function App() {
 
   const ping = useCallback((text: string) => {
     setToast(text);
-    window.setTimeout(() => setToast((current) => (current === text ? null : current)), 2200);
+    window.setTimeout(() => setToast((current) => (current === text ? null : current)), 1800);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -74,19 +87,12 @@ export function App() {
       try {
         const fp = await fingerprint();
         const tg = telegram();
-        const body = tg?.initData
-          ? { initData: tg.initData, fp }
-          : { devId, name: "Мишка", fp, startParam: params.get("startapp") };
+        const body = tg?.initData ? { initData: tg.initData, fp } : { devId, name: "Мишка", fp, startParam: params.get("startapp") };
         const payload = await request<{ token: string; dev: boolean; state: GameState }>("/api/session", body);
         if (stop) return;
         setToken(payload.token);
         setDev(payload.dev);
         setState(payload.state);
-        if (payload.state.passive.bank > 0) setSheet("offline");
-        else if (payload.state.newbie && payload.state.me.level >= 2 && !sessionStorage.getItem("tapteddy_newbie")) {
-          sessionStorage.setItem("tapteddy_newbie", "1");
-          setSheet("newbie");
-        }
       } catch (err) {
         if (!stop) setError(err instanceof Error ? err.message : "Не открылось");
       }
@@ -97,13 +103,7 @@ export function App() {
   useEffect(() => {
     if (!state) return;
     const id = window.setInterval(() => { void flush(); }, 700);
-    const slow = window.setInterval(() => {
-      if (pending.current === 0 && !flushing.current) void refresh().catch(() => undefined);
-    }, 12000);
-    return () => {
-      window.clearInterval(id);
-      window.clearInterval(slow);
-    };
+    return () => window.clearInterval(id);
   }, [Boolean(state)]);
 
   async function flush() {
@@ -120,7 +120,20 @@ export function App() {
       });
       const extra = pending.current;
       setState((prev) => (prev ? applyLite(prev, lite, extra) : prev));
-      if (lite.me.level !== stateRef.current?.me.level) void refresh().catch(() => undefined);
+      if (lite.gained.crits > 0) {
+        setCrit(true);
+        window.setTimeout(() => setCrit(false), 240);
+        haptic("crit");
+      }
+      if (lite.gained.levelUp) {
+        haptic("ok");
+        setLevelUp(lite.me.level);
+        void refresh();
+      }
+      if (lite.gained.boxes > 0) {
+        haptic("ok");
+        ping("Плюшевый бокс заряжен");
+      }
     } catch (err) {
       pending.current += taps;
       const message = err instanceof Error ? err.message : "Сеть";
@@ -133,28 +146,36 @@ export function App() {
   function onTap() {
     const current = stateRef.current;
     if (!current) return;
-    const autotap = current.timers.autotapUntil > current.now;
     haptic("tap");
     setSquish(true);
-    window.setTimeout(() => setSquish(false), 180);
+    window.setTimeout(() => setSquish(false), 200);
     const id = Date.now() + Math.random();
-    setFloats((list) => [...list.slice(-12), { id, n: current.me.perTap, x: 42 + Math.random() * 16 }]);
-    window.setTimeout(() => setFloats((list) => list.filter((item) => item.id !== id)), 900);
-    if (autotap || current.me.energy <= 0) return;
+    setFloats((list) => [...list.slice(-10), { id, n: current.me.perTap, x: 40 + Math.random() * 20, crit: false }]);
+    window.setTimeout(() => setFloats((list) => list.filter((item) => item.id !== id)), 860);
+    const burst = Array.from({ length: 6 }, (_, index) => {
+      const angle = (Math.PI * 2 * index) / 6;
+      return { id: id + index + 1, dx: `${Math.cos(angle) * 54}px`, dy: `${Math.sin(angle) * 54}px` };
+    });
+    setSparks((list) => [...list.slice(-12), ...burst]);
+    window.setTimeout(() => setSparks((list) => list.filter((item) => !burst.some((bit) => bit.id === item.id))), 560);
+    if (current.timers.autotapUntil > current.now || current.me.energy <= 0) return;
     pending.current += 1;
     setState((prev) => {
       if (!prev || prev.me.energy <= 0) return prev;
-      return { ...prev, me: { ...prev.me, energy: prev.me.energy - 1, coins: prev.me.coins + prev.me.perTap } };
+      const combo = prev.me.combo + 1;
+      return { ...prev, me: { ...prev.me, energy: prev.me.energy - 1, coins: prev.me.coins + prev.me.perTap, combo } };
     });
   }
 
   async function onAct(body: Record<string, unknown>) {
     try {
-      const payload = await request<{ state: GameState; message: string }>("/api/action", body);
+      const payload = await request<{ state: GameState; message: string; drop?: Drop }>("/api/action", body);
       setState(payload.state);
-      haptic("ok");
+      if (payload.drop) {
+        haptic("ok");
+        setDrop(payload.drop);
+      } else haptic("ok");
       ping(payload.message);
-      if (body.type === "claim_passive") setSheet(null);
     } catch (err) {
       haptic("err");
       ping(err instanceof Error ? err.message : "Не вышло");
@@ -169,9 +190,8 @@ export function App() {
         tg.openInvoice(invoice.url, (status) => {
           if (status === "paid") {
             haptic("ok");
-            void refresh().then(() => ping("Оплата прошла")).catch(() => undefined);
-          } else if (status === "cancelled") ping("Оплата отменена");
-          else void refresh().catch(() => undefined);
+            void refresh().then(() => ping("Оплата прошла"));
+          }
         });
         return;
       }
@@ -179,7 +199,7 @@ export function App() {
         await onAct({ type: "dev_buy", sku, ...extra });
         return;
       }
-      ping("Оплата звёздами открывается в Telegram");
+      ping("Звёзды открываются в Telegram");
     } catch (err) {
       haptic("err");
       ping(err instanceof Error ? err.message : "Платёж не создался");
@@ -187,79 +207,49 @@ export function App() {
   }
 
   if (error) {
-    return (
-      <div className="gate">
-        <img src="/bear.png" alt="" />
-        <h1>TapTeddy</h1>
-        <p>{error}</p>
-      </div>
-    );
+    return <div className="gate"><img src="/bear.png" alt="" /><h1>TapTeddy</h1><p>{error}</p></div>;
   }
   if (!state) {
-    return (
-      <div className="loading">
-        <img src="/bear.png" alt="" />
-        <p className="eyebrow">TapTeddy</p>
-      </div>
-    );
+    return <div className="loading"><img src="/bear.png" alt="" /><p>TapTeddy</p></div>;
   }
+  const equipped = state.skins.find((item) => item.equipped);
 
   return (
-    <div className="app">
+    <div className="app pad">
       {toast ? <div className="toast">{toast}</div> : null}
-      {tab === "tap" ? <TapScreen state={state} squish={squish} floats={floats} onTap={onTap} onOpen={setSheet} onBuy={(sku) => void onBuy(sku)} onShop={() => setTab("shop")} /> : null}
-      {tab === "upgrades" ? <UpgradesScreen state={state} onAct={(body) => void onAct(body)} /> : null}
-      {tab === "shop" ? <ShopScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku, extra) => void onBuy(sku, extra)} /> : null}
-      {tab === "clan" ? <ClanScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} /> : null}
-      {tab === "top" ? <TopScreen state={state} /> : null}
-      {tab === "friends" ? <FriendsScreen state={state} /> : null}
-
-      <nav className="tabbar" aria-label="Разделы">
+      <div className="screen" key={tab}>
+        {tab === "tap" ? <TapScreen state={state} squish={squish} crit={crit} floats={floats} sparks={sparks} onTap={onTap} onBuy={(sku) => void onBuy(sku)} /> : null}
+        {tab === "skins" ? <SkinsScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} /> : null}
+        {tab === "boosts" ? <BoostsScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku, extra) => void onBuy(sku, extra)} /> : null}
+        {tab === "tasks" ? <TasksScreen state={state} onAct={(body) => void onAct(body)} /> : null}
+        {tab === "top" ? <TopScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} /> : null}
+      </div>
+      <nav className="tabs">
         {TABS.map((item) => (
-          <button key={item.id} className={tab === item.id ? "tab on" : "tab"} aria-current={tab === item.id ? "page" : undefined} onClick={() => setTab(item.id)}>
+          <button key={item.id} className={tab === item.id ? "tab on" : "tab"} onClick={() => { haptic("tap"); setTab(item.id); }}>
             {item.icon}
             {item.label}
           </button>
         ))}
       </nav>
-
-      {sheet === "offline" ? (
-        <Sheet title="Пока тебя не было" text={state.passive.bank > 0 ? `${state.passive.bank.toLocaleString("ru-RU")} мёда в копилке. Дальше ${state.passive.capHours} ч не копится, пока не заберёшь.` : "Копилка пустая. Пассив капает, пока ты не в игре."} onClose={() => setSheet(null)}>
-          <button className="cta" disabled={state.passive.bank <= 0} onClick={() => void onAct({ type: "claim_passive" })}>Забрать</button>
-        </Sheet>
+      {drop && equipped ? (
+        <div className="reveal" onClick={() => setDrop(null)}>
+          <div className={`flip r-${drop.rarity}`} onClick={(event) => event.stopPropagation()}>
+            <p className="tiny">{drop.duplicate ? "ПОВТОР" : "НОВЫЙ ОКРАС"}</p>
+            <h2>{drop.name}</h2>
+            <p>{drop.duplicate ? `+${drop.shards} осколков` : drop.rarity}</p>
+            <button className="press wide" onClick={() => setDrop(null)}>Класс</button>
+          </div>
+        </div>
       ) : null}
-      {sheet === "streak" ? (
-        <Sheet title="Серия" text={state.streak.claimedToday ? "Сегодня уже забрал." : "Раз в сутки по UTC. Пропуск сбрасывает на день 1."} onClose={() => setSheet(null)}>
-          {state.streak.rewards.map((reward) => (
-            <div className="list-row" key={reward.day}>
-              <span>День {reward.day}</span>
-              <b>{reward.coins.toLocaleString("ru-RU")}{reward.extra ? ` · ${reward.extra}` : ""}</b>
-            </div>
-          ))}
-          <p>Заморозок: {state.streak.freezes}</p>
-          {state.streak.canSave ? <button className="ghost" onClick={() => state.streak.freezes > 0 ? void onAct({ type: "save_streak" }) : void onBuy("freeze")}>{state.streak.freezes > 0 ? "Сохранить серию" : "Сохранить серию · 25⭐"}</button> : null}
-          <button className="cta" disabled={state.streak.claimedToday} onClick={() => void onAct({ type: "streak" })}>Забрать</button>
-        </Sheet>
-      ) : null}
-      {sheet === "code" ? (
-        <Sheet title="Код дня" text={state.daily.codeUnlocked ? `Награда ${state.daily.codeReward.toLocaleString("ru-RU")} мёда. Один раз до полуночи UTC.` : "Откроется на 5 уровне."} onClose={() => setSheet(null)}>
-          {state.channelUrl ? <p><a href={state.channelUrl}>Канал с кодом</a></p> : <p>Код публикует владелец бота командой /dailycode.</p>}
-          <input className="field" maxLength={8} value={code} placeholder="4 символа" onChange={(event) => setCode(event.target.value.toUpperCase())} />
-          <button className="cta" disabled={!state.daily.codeUnlocked || state.daily.codeDone} onClick={() => void onAct({ type: "code", code })}>Ввести</button>
-        </Sheet>
-      ) : null}
-      {sheet === "combo" ? (
-        <Sheet title="Комбо дня" text={`Подними каждую карту хотя бы на уровень сегодня. Награда ${state.daily.comboReward.toLocaleString("ru-RU")} и x2 на 15 минут.`} onClose={() => setSheet(null)}>
-          {state.daily.combo.map((card) => (
-            <div className="list-row" key={card.id}><span>{card.name}</span><b>{card.done ? "есть" : "ещё нет"}</b></div>
-          ))}
-          <button className="cta" disabled={state.daily.comboDone} onClick={() => void onAct({ type: "combo" })}>Забрать</button>
-        </Sheet>
-      ) : null}
-      {sheet === "newbie" && state.newbie ? (
-        <Sheet title="Набор новичка" text="Полный бак, x2 на час, автопилот на час, окрас «Первая берлога» и 20 000 мёда. Один раз." onClose={() => setSheet(null)}>
-          <button className="cta" onClick={() => void onBuy("newbie")}>Забрать набор · 75⭐</button>
-        </Sheet>
+      {levelUp != null ? (
+        <div className="reveal" onClick={() => setLevelUp(null)}>
+          <div className="flip" onClick={(event) => event.stopPropagation()}>
+            <p className="tiny">УРОВЕНЬ</p>
+            <div className="num" style={{ fontSize: 64 }}>{levelUp}</div>
+            <button className="press wide" onClick={() => setLevelUp(null)}>Дальше</button>
+          </div>
+        </div>
       ) : null}
     </div>
   );
