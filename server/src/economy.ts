@@ -1,0 +1,403 @@
+import crypto from "node:crypto";
+import { CARDS, skinById, type CardDef, type Rarity } from "./catalog.js";
+import type { Clan, User } from "./types.js";
+
+export const DAY = 86_400_000;
+export const SEASON_MS = 14 * DAY;
+/** Понедельник 00:00 UTC, от него считаются сезоны по 14 дней. */
+export const SEASON_EPOCH = Date.parse("2026-01-05T00:00:00Z");
+export const TAP_RATE = 12;
+export const TAP_BURST = 16;
+export const REGEN_MIN_MS = 1200;
+export const STAR_MTAP_PRICES = [50, 100, 150, 250, 400] as const;
+
+export function utcDay(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+export function shiftDay(day: string, delta: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + delta * DAY).toISOString().slice(0, 10);
+}
+
+export function weekId(now: number): string {
+  const d = new Date(now);
+  const midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const sinceMon = (d.getUTCDay() + 6) % 7;
+  return new Date(midnight - sinceMon * DAY).toISOString().slice(0, 10);
+}
+
+export function seasonId(now: number): number {
+  return Math.floor((now - SEASON_EPOCH) / SEASON_MS);
+}
+
+export function seasonEndsAt(now: number): number {
+  return SEASON_EPOCH + (seasonId(now) + 1) * SEASON_MS;
+}
+
+export function xpToAdvance(level: number): number {
+  return Math.floor(2000 * Math.pow(level, 1.55));
+}
+
+export function energyUpgradeCost(level: number): number {
+  return Math.floor(800 * Math.pow(1.45, level - 1));
+}
+
+export function multitapCost(level: number): number {
+  return Math.floor(1000 * Math.pow(1.55, level - 1));
+}
+
+export function regenUpgradeCost(level: number): number {
+  return Math.floor(700 * Math.pow(1.42, level - 1));
+}
+
+export function cardUpgradeCost(basePrice: number, currentLevel: number): number {
+  return Math.floor(basePrice * Math.pow(1.32, currentLevel));
+}
+
+export function refillPrice(countToday: number): number {
+  if (countToday >= 12) return 100;
+  if (countToday >= 8) return 50;
+  return 25;
+}
+
+export function starMtapPrice(bought: number): number | null {
+  if (bought < 0 || bought >= STAR_MTAP_PRICES.length) return null;
+  return STAR_MTAP_PRICES[bought];
+}
+
+export function maxMultitap(level: number): number {
+  return 3 + level;
+}
+
+export function cardLevel(user: User, id: string): number {
+  return user.data.cards[id]?.level ?? 0;
+}
+
+export function hasPass(user: User, now: number): boolean {
+  return user.data.passSeason !== 0 && user.data.passSeason === seasonId(now);
+}
+
+export function skinMods(user: User): { tap: number; energy: number; regen: number; crit: number; offline: number } {
+  const id = user.skinId || "classic";
+  const def = skinById(id);
+  const level = user.data.skinState?.[id]?.level ?? 0;
+  if (!def || level <= 0) return { tap: 0, energy: 0, regen: 0, crit: 0, offline: 0 };
+  return {
+    tap: def.bonus.tap * level,
+    energy: def.bonus.energy * level,
+    regen: def.bonus.regen * level,
+    crit: Math.min(0.35, def.bonus.crit * level),
+    offline: def.bonus.offline * level,
+  };
+}
+
+export function energyCap(user: User, now: number): number {
+  let bonus = user.data.bonusEnergy;
+  if (user.data.seasonEnergyBonusSeason === seasonId(now)) bonus += user.data.seasonEnergyBonus;
+  let extra = 0;
+  for (const card of CARDS) {
+    if (card.kind === "energy") extra += card.base * cardLevel(user, card.id);
+  }
+  return 2000 + 250 * (user.data.energyLevel - 1) + 20 * (user.level - 1) + bonus + extra + skinMods(user).energy;
+}
+
+export function tapCardFraction(user: User): number {
+  let sum = 0;
+  for (const card of CARDS) {
+    if (card.kind === "tap") sum += (card.base / 100) * cardLevel(user, card.id);
+  }
+  return Math.min(3, sum);
+}
+
+export function regenCardFraction(user: User): number {
+  let sum = 0;
+  for (const card of CARDS) {
+    if (card.kind === "regen") sum += (card.base / 100) * cardLevel(user, card.id);
+  }
+  return sum;
+}
+
+export function passivePerHour(user: User): number {
+  let sum = 0;
+  for (const card of CARDS) {
+    if (card.kind === "income") sum += card.base * cardLevel(user, card.id);
+  }
+  return Math.floor(sum * (1 + skinMods(user).offline));
+}
+
+export function boostMult(user: User, clan: Clan | null, now: number): number {
+  const x2 = user.data.x2Until > now ? 2 : 1;
+  const pass = hasPass(user, now) ? 1.2 : 1;
+  let clanAdd = 0;
+  if (clan && clan.data.stormUntil > now) clanAdd += clan.data.stormPct / 100;
+  if (clan && clan.data.buffUntil > now) clanAdd += clan.data.buffPct / 100;
+  return x2 * pass * (1 + clanAdd);
+}
+
+export function comboBonus(combo: number): number {
+  return Math.min(0.5, Math.floor(Math.max(0, combo) / 10) * 0.05);
+}
+
+export function tapValue(user: User, clan: Clan | null, now: number, combo = user.data.combo ?? 0): number {
+  const raw = user.data.multitap * (1 + tapCardFraction(user) + skinMods(user).tap) * boostMult(user, clan, now) * (1 + comboBonus(combo));
+  return Math.max(1, Math.floor(raw));
+}
+
+export function regenIntervalMs(user: User): number {
+  let rate = 0.5 * (1 + 0.04 * (user.data.regenLevel - 1));
+  rate *= 1 + regenCardFraction(user);
+  rate *= 1 + skinMods(user).regen;
+  return Math.max(REGEN_MIN_MS, Math.round(1000 / rate));
+}
+
+export function passiveCapMs(user: User, now: number): number {
+  return (hasPass(user, now) ? 8 : 3) * 3_600_000;
+}
+
+export interface TokenState {
+  tokens: number;
+  at: number;
+}
+
+/** Ведро: запас 16, пополнение 12/сек. Пачка тапов за долгое отсутствие не копится выше 16. */
+export function consumeTapTokens(state: TokenState, now: number, requested: number): number {
+  const elapsed = Math.max(0, now - state.at);
+  const regen = (elapsed / 1000) * TAP_RATE;
+  state.tokens = Math.min(TAP_BURST, state.tokens + regen);
+  const take = Math.max(0, Math.min(Math.floor(requested), Math.floor(state.tokens)));
+  state.tokens -= take;
+  state.at = now;
+  return take;
+}
+
+export function regenEnergy(user: User, now: number): void {
+  const cap = energyCap(user, now);
+  if (user.data.energy >= cap) {
+    user.data.energy = cap;
+    user.data.energyAt = now;
+    return;
+  }
+  const interval = regenIntervalMs(user);
+  const elapsed = Math.max(0, now - user.data.energyAt);
+  const gained = Math.floor(elapsed / interval);
+  if (gained <= 0) return;
+  const next = Math.min(cap, user.data.energy + gained);
+  const used = next - user.data.energy;
+  user.data.energy = next;
+  user.data.energyAt = next >= cap ? now : user.data.energyAt + used * interval;
+}
+
+export interface StreakReward {
+  coins: number;
+  token?: boolean;
+  x2min?: number;
+  frame?: boolean;
+}
+
+export function streakReward(day: number): StreakReward {
+  switch (day) {
+    case 1:
+      return { coins: 500 };
+    case 2:
+      return { coins: 1000 };
+    case 3:
+      return { coins: 2000, token: true };
+    case 4:
+      return { coins: 3500 };
+    case 5:
+      return { coins: 5000 };
+    case 6:
+      return { coins: 8000 };
+    case 7:
+      return { coins: 15000, x2min: 30, frame: true };
+    default:
+      return { coins: 0 };
+  }
+}
+
+export function canSaveStreak(user: User, now: number): boolean {
+  if (!user.data.streakLast || user.data.streakDay <= 0) return false;
+  const today = utcDay(now);
+  if (user.data.streakLast === today || user.data.streakLast === shiftDay(today, -1)) return false;
+  const last = Date.parse(`${user.data.streakLast}T00:00:00Z`);
+  return now >= last + 2 * DAY && now < last + 3 * DAY;
+}
+
+export function nextStreakDay(user: User, now: number): number {
+  if (!user.data.streakLast) return 1;
+  const yesterday = shiftDay(utcDay(now), -1);
+  if (user.data.streakLast === yesterday) return user.data.streakDay >= 7 ? 1 : user.data.streakDay + 1;
+  return 1;
+}
+
+export function codeReward(level: number): number {
+  return Math.min(70_000, 10_000 + 2_000 * level);
+}
+
+export function comboReward(level: number): number {
+  return 25_000 + 3_000 * level;
+}
+
+export function clanLevelFromTotal(points: number): number {
+  return Math.min(13, 1 + Math.floor(points / 300_000));
+}
+
+export function clanMemberCap(level: number): number {
+  return Math.min(150, 30 + 10 * (level - 1));
+}
+
+export function passLevelFromXp(xp: number): number {
+  return Math.min(30, Math.floor(xp / 80));
+}
+
+const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+export function dailyCode(day: string, salt: string): string {
+  const hash = crypto.createHmac("sha256", salt).update(`code:${day}`).digest();
+  let out = "";
+  for (let i = 0; i < 4; i++) out += ALPHABET[hash[i]! % ALPHABET.length];
+  return out;
+}
+
+export function dailyCombo(day: string, salt: string): string[] {
+  const ids = CARDS.filter((c) => c.category === "den" && c.kind === "income").map((c) => c.id);
+  const hash = crypto.createHmac("sha256", salt).update(`combo:${day}`).digest();
+  const picked: string[] = [];
+  for (let i = 0; i < hash.length && picked.length < 3; i++) {
+    const id = ids[hash[i]! % ids.length]!;
+    if (!picked.includes(id)) picked.push(id);
+  }
+  return picked;
+}
+
+export interface LiveOffer {
+  id: string;
+  title: string;
+  description: string;
+  stars: number;
+  startsAt: number;
+  endsAt: number;
+}
+
+export function currentOffer(now: number): LiveOffer | null {
+  const monday = Date.parse(`${weekId(now)}T00:00:00Z`);
+  const windows: LiveOffer[] = [
+    {
+      id: `night-${utcDay(monday + 2 * DAY)}`,
+      title: "Ночная смена",
+      description: "Автопилот на 6 часов и 2 жетона полного бака. Состав фиксированный.",
+      stars: 200,
+      startsAt: monday + 2 * DAY + 16 * 3_600_000,
+      endsAt: monday + 2 * DAY + 16 * 3_600_000 + DAY,
+    },
+    {
+      id: `rush-${utcDay(monday + 5 * DAY)}`,
+      title: "Рывок сезона",
+      description: "x2 на 8 часов и 50 000 мёда. Мёд из набора не даёт опыт и не идёт в сезон.",
+      stars: 175,
+      startsAt: monday + 5 * DAY + 10 * 3_600_000,
+      endsAt: monday + 5 * DAY + 10 * 3_600_000 + DAY,
+    },
+  ];
+  return windows.find((w) => now >= w.startsAt && now < w.endsAt) ?? null;
+}
+
+export function incomeCards(): CardDef[] {
+  return CARDS.filter((c) => c.kind === "income");
+}
+
+export const BOX_EVERY = 250;
+export const BOX_ODDS: { rarity: Rarity; pct: number }[] = [
+  { rarity: "common", pct: 55 },
+  { rarity: "rare", pct: 28 },
+  { rarity: "epic", pct: 12 },
+  { rarity: "legendary", pct: 4 },
+  { rarity: "mythic", pct: 1 },
+];
+
+export function rarityFromRoll(roll: number): Rarity {
+  if (roll < 5500) return "common";
+  if (roll < 8300) return "rare";
+  if (roll < 9500) return "epic";
+  if (roll < 9900) return "legendary";
+  return "mythic";
+}
+
+export function shardsOnDuplicate(rarity: Rarity): number {
+  switch (rarity) {
+    case "common":
+      return 1;
+    case "rare":
+      return 2;
+    case "epic":
+      return 4;
+    case "legendary":
+      return 8;
+    default:
+      return 16;
+  }
+}
+
+const UPGRADE_COIN: Record<Rarity, number> = { common: 400, rare: 900, epic: 2000, legendary: 5000, mythic: 12000 };
+
+export function skinUpgradeShards(level: number): number {
+  return level;
+}
+
+export function skinUpgradeCoins(rarity: Rarity, level: number): number {
+  return Math.floor(UPGRADE_COIN[rarity] * level);
+}
+
+export const LEAGUES = [
+  { id: "bronze", name: "Бронза", min: 0 },
+  { id: "silver", name: "Серебро", min: 5_000 },
+  { id: "gold", name: "Золото", min: 25_000 },
+  { id: "platinum", name: "Платина", min: 100_000 },
+  { id: "diamond", name: "Алмаз", min: 400_000 },
+] as const;
+
+export function leagueOf(weekScore: number): { id: string; name: string; min: number; next: number | null } {
+  let current: { id: string; name: string; min: number } = LEAGUES[0];
+  for (const league of LEAGUES) {
+    if (weekScore >= league.min) current = league;
+  }
+  const index = LEAGUES.findIndex((league) => league.id === current.id);
+  const next = LEAGUES[index + 1]?.min ?? null;
+  return { ...current, next };
+}
+
+export interface TaskDef {
+  id: string;
+  title: string;
+  kind: "taps" | "combo" | "streak" | "upgrade";
+  goal: number;
+  coins?: number;
+  box?: number;
+}
+
+export const TASKS: TaskDef[] = [
+  { id: "tap_100", title: "100 тапов за день", kind: "taps", goal: 100, coins: 500 },
+  { id: "tap_500", title: "500 тапов за день", kind: "taps", goal: 500, box: 1 },
+  { id: "combo_30", title: "Комбо 30", kind: "combo", goal: 30, coins: 800 },
+  { id: "streak", title: "Забрать серию", kind: "streak", goal: 1, coins: 300 },
+  { id: "upgrade", title: "Улучшить карту или скин", kind: "upgrade", goal: 1, coins: 700 },
+];
+
+export interface AchievementDef {
+  id: string;
+  title: string;
+  stat: "taps" | "level" | "skins" | "boxes" | "clan";
+  goal: number;
+  coins: number;
+}
+
+export const ACHIEVEMENTS: AchievementDef[] = [
+  { id: "taps_1k", title: "Тысяча лап", stat: "taps", goal: 1_000, coins: 2_000 },
+  { id: "taps_10k", title: "Десять тысяч", stat: "taps", goal: 10_000, coins: 15_000 },
+  { id: "lvl_10", title: "Десятый уровень", stat: "level", goal: 10, coins: 5_000 },
+  { id: "lvl_20", title: "Двадцатый", stat: "level", goal: 20, coins: 20_000 },
+  { id: "skins_5", title: "Пять окрасов", stat: "skins", goal: 5, coins: 3_000 },
+  { id: "skins_15", title: "Коллекция", stat: "skins", goal: 15, coins: 20_000 },
+  { id: "boxes_5", title: "Пять боксов", stat: "boxes", goal: 5, coins: 4_000 },
+  { id: "clan", title: "Свой клан", stat: "clan", goal: 1, coins: 2_500 },
+];
