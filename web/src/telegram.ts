@@ -77,8 +77,8 @@ export function bootTelegram(): void {
   } catch {
     /* без свайпов всё равно играем */
   }
-  tg.setHeaderColor?.("#2a2a2e");
-  tg.setBackgroundColor?.("#2a2a2e");
+  tg.setHeaderColor?.("#15161a");
+  tg.setBackgroundColor?.("#15161a");
   applySafeArea();
   tg.onEvent?.("fullscreenChanged", applySafeArea);
   tg.onEvent?.("viewportChanged", applySafeArea);

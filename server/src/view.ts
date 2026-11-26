@@ -166,7 +166,7 @@ export interface FullDTO {
     drop: boolean;
   }[];
   collection: { owned: number; total: number; pct: number };
-  box: { charges: number; progress: number; goal: number; odds: { rarity: string; pct: number }[] };
+  box: { charges: number; progress: number; goal: number; opened: number; odds: { rarity: string; pct: number }[] };
   tasks: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; reward: string }[];
   achievements: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; coins: number }[];
   league: { id: string; name: string; min: number; next: number | null; score: number };
@@ -379,6 +379,7 @@ export function present(user: User, now: number): FullDTO {
       charges: user.data.boxCharges ?? 0,
       progress: user.data.boxProgress ?? 0,
       goal: BOX_EVERY,
+      opened: user.data.boxesOpened ?? 0,
       odds: BOX_ODDS,
     },
     tasks: TASKS.map((task) => {

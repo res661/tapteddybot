@@ -1,4 +1,4 @@
-export type Tab = "tap" | "skins" | "boosts" | "tasks" | "top";
+export type Tab = "tap" | "skins" | "boxes" | "tasks" | "top";
 
 export interface GameState {
   now: number;
@@ -106,7 +106,7 @@ export interface GameState {
     drop: boolean;
   }[];
   collection: { owned: number; total: number; pct: number };
-  box: { charges: number; progress: number; goal: number; odds: { rarity: string; pct: number }[] };
+  box: { charges: number; progress: number; goal: number; opened: number; odds: { rarity: string; pct: number }[] };
   tasks: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; reward: string }[];
   achievements: { id: string; title: string; goal: number; value: number; done: boolean; claimed: boolean; coins: number }[];
   league: { id: string; name: string; min: number; next: number | null; score: number };

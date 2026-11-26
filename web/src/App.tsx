@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { fingerprint, request, setToken } from "./api.js";
 import { IconShop, IconTap, IconTop, IconUp } from "./icons.js";
-import { BoostsScreen, SkinsScreen, TapScreen, TasksScreen, TopScreen } from "./screens.js";
+import { BoostsSheet, BoxesScreen, SkinsScreen, TapScreen, TasksScreen, TopBar, TopScreen } from "./screens.js";
 import { bootTelegram, haptic, inTelegram, telegram } from "./telegram.js";
 import type { GameState, LiteState, Tab } from "./types.js";
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
-  { id: "tap", label: "Тап", icon: <IconTap /> },
-  { id: "skins", label: "Скины", icon: <IconShop /> },
-  { id: "boosts", label: "Бусты", icon: <IconUp /> },
-  { id: "tasks", label: "Дела", icon: <IconTop /> },
-  { id: "top", label: "Топ", icon: <IconTop /> },
+  { id: "tap", label: "ТАП", icon: <IconTap /> },
+  { id: "skins", label: "СКИНЫ", icon: <IconShop /> },
+  { id: "boxes", label: "БОКСЫ", icon: <IconUp /> },
+  { id: "tasks", label: "ДЕЛА", icon: <IconTop /> },
+  { id: "top", label: "ТОП", icon: <IconTop /> },
 ];
 
 function applyLite(prev: GameState, lite: LiteState, extra: number): GameState {
@@ -49,17 +49,18 @@ export function App() {
   const [dev, setDev] = useState(false);
   const [tab, setTab] = useState<Tab>(() => {
     const asked = new URLSearchParams(location.search).get("tab");
-    if (asked === "skins" || asked === "boosts" || asked === "tasks" || asked === "top" || asked === "tap") return asked;
+    if (asked === "skins" || asked === "boxes" || asked === "tasks" || asked === "top" || asked === "tap") return asked;
     return "tap";
   });
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [squish, setSquish] = useState(false);
-  const [crit, setCrit] = useState(false);
-  const [floats, setFloats] = useState<{ id: number; n: number; x: number; crit: boolean }[]>([]);
-  const [sparks, setSparks] = useState<{ id: number; dx: string; dy: string }[]>([]);
+  const [floats, setFloats] = useState<{ id: number; n: number; x: number }[]>([]);
   const [drop, setDrop] = useState<Drop | null>(null);
   const [levelUp, setLevelUp] = useState<number | null>(null);
+  const [boosts, setBoosts] = useState(false);
+  const [tutor, setTutor] = useState(() => localStorage.getItem("tapteddy_tutor") !== "1" && new URLSearchParams(location.search).get("tutor") !== "0");
+  const [unlock, setUnlock] = useState<string | null>(null);
   const pending = useRef(0);
   const flushing = useRef(false);
   const stateRef = useRef<GameState | null>(null);
@@ -120,11 +121,7 @@ export function App() {
       });
       const extra = pending.current;
       setState((prev) => (prev ? applyLite(prev, lite, extra) : prev));
-      if (lite.gained.crits > 0) {
-        setCrit(true);
-        window.setTimeout(() => setCrit(false), 240);
-        haptic("crit");
-      }
+      if (lite.gained.crits > 0) haptic("crit");
       if (lite.gained.levelUp) {
         haptic("ok");
         setLevelUp(lite.me.level);
@@ -134,6 +131,7 @@ export function App() {
         haptic("ok");
         ping("Плюшевый бокс заряжен");
       }
+      if (lite.me.tapCount >= 20 && localStorage.getItem("tapteddy_unlock_boxes") !== "1") setUnlock("БОКСЫ");
     } catch (err) {
       pending.current += taps;
       const message = err instanceof Error ? err.message : "Сеть";
@@ -147,17 +145,15 @@ export function App() {
     const current = stateRef.current;
     if (!current) return;
     haptic("tap");
+    if (tutor) {
+      localStorage.setItem("tapteddy_tutor", "1");
+      setTutor(false);
+    }
     setSquish(true);
     window.setTimeout(() => setSquish(false), 200);
     const id = Date.now() + Math.random();
-    setFloats((list) => [...list.slice(-10), { id, n: current.me.perTap, x: 40 + Math.random() * 20, crit: false }]);
+    setFloats((list) => [...list.slice(-10), { id, n: current.me.perTap, x: 40 + Math.random() * 20 }]);
     window.setTimeout(() => setFloats((list) => list.filter((item) => item.id !== id)), 860);
-    const burst = Array.from({ length: 6 }, (_, index) => {
-      const angle = (Math.PI * 2 * index) / 6;
-      return { id: id + index + 1, dx: `${Math.cos(angle) * 54}px`, dy: `${Math.sin(angle) * 54}px` };
-    });
-    setSparks((list) => [...list.slice(-12), ...burst]);
-    window.setTimeout(() => setSparks((list) => list.filter((item) => !burst.some((bit) => bit.id === item.id))), 560);
     if (current.timers.autotapUntil > current.now || current.me.energy <= 0) return;
     pending.current += 1;
     setState((prev) => {
@@ -214,40 +210,75 @@ export function App() {
   }
   const equipped = state.skins.find((item) => item.equipped);
 
+  const locked = (id: Tab) => (id === "boxes" && state.me.tapCount < 20) || (id === "tasks" && state.me.level < 2) || (id === "top" && state.me.level < 3);
+  const badge = (id: Tab) => (id === "boxes" ? state.box.charges : id === "tasks" ? state.tasks.filter((task) => task.done && !task.claimed).length : 0);
   return (
-    <div className="app pad">
+    <div className="app">
       {toast ? <div className="toast">{toast}</div> : null}
+      {tab === "tap" ? <TopBar state={state} onClan={() => (locked("top") ? ping("Топ откроется на 3 уровне") : setTab("top"))} onWallet={() => setBoosts(true)} /> : null}
       <div className="screen" key={tab}>
-        {tab === "tap" ? <TapScreen state={state} squish={squish} crit={crit} floats={floats} sparks={sparks} onTap={onTap} onBuy={(sku) => void onBuy(sku)} /> : null}
+        {tab === "tap" ? <TapScreen state={state} squish={squish} floats={floats} onTap={onTap} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} onSkins={() => setTab("skins")} /> : null}
         {tab === "skins" ? <SkinsScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} /> : null}
-        {tab === "boosts" ? <BoostsScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku, extra) => void onBuy(sku, extra)} /> : null}
+        {tab === "boxes" ? <BoxesScreen state={state} onAct={(body) => void onAct(body)} /> : null}
         {tab === "tasks" ? <TasksScreen state={state} onAct={(body) => void onAct(body)} /> : null}
-        {tab === "top" ? <TopScreen state={state} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} /> : null}
+        {tab === "top" ? <TopScreen state={state} onAct={(body) => void onAct(body)} /> : null}
       </div>
-      <nav className="tabs">
-        {TABS.map((item) => (
-          <button key={item.id} className={tab === item.id ? "tab on" : "tab"} onClick={() => { haptic("tap"); setTab(item.id); }}>
-            {item.icon}
-            {item.label}
-          </button>
-        ))}
+      <nav className="nav">
+        {TABS.map((item) => {
+          const isLocked = locked(item.id);
+          const count = badge(item.id);
+          return (
+            <button key={item.id} className={tab === item.id ? "on" : ""} onClick={() => {
+              if (isLocked) {
+                ping(item.id === "boxes" ? "Боксы откроются после 20 тапов" : item.id === "tasks" ? "Дела откроются на 2 уровне" : "Топ откроется на 3 уровне");
+                return;
+              }
+              haptic("tap");
+              setTab(item.id);
+            }}>
+              {item.icon}
+              {item.label}
+              {isLocked ? <span className="lock">🔒</span> : null}
+              {!isLocked && count > 0 ? <span className="badge">{count}</span> : null}
+            </button>
+          );
+        })}
       </nav>
+      {boosts ? <BoostsSheet state={state} onAct={(body) => void onAct(body)} onBuy={(sku) => void onBuy(sku)} onClose={() => setBoosts(false)} /> : null}
+      {tutor && tab === "tap" ? (
+        <div className="tutor">
+          <div className="speech">
+            <img src="/bear.png" alt="" />
+            Тапай мишку. Свайпни карточку, чтобы сменить окрас.
+            <span className="hand">👇</span>
+          </div>
+        </div>
+      ) : null}
+      {unlock ? (
+        <div className="reveal">
+          <div className="unlock-card">
+            <p>ДОСТУПЕН НОВЫЙ РАЗДЕЛ ИГРЫ!</p>
+            <button className="q" onClick={() => { localStorage.setItem("tapteddy_unlock_boxes", "1"); setUnlock(null); setTab("boxes"); }}>?</button>
+            <div>{unlock}</div>
+          </div>
+        </div>
+      ) : null}
       {drop && equipped ? (
         <div className="reveal" onClick={() => setDrop(null)}>
-          <div className={`flip r-${drop.rarity}`} onClick={(event) => event.stopPropagation()}>
+          <div className={`unlock-card g-${drop.rarity}`} onClick={(event) => event.stopPropagation()}>
             <p className="tiny">{drop.duplicate ? "ПОВТОР" : "НОВЫЙ ОКРАС"}</p>
             <h2>{drop.name}</h2>
             <p>{drop.duplicate ? `+${drop.shards} осколков` : drop.rarity}</p>
-            <button className="press wide" onClick={() => setDrop(null)}>Класс</button>
+            <button className="btn btn-y" onClick={() => setDrop(null)}>КЛАСС</button>
           </div>
         </div>
       ) : null}
       {levelUp != null ? (
         <div className="reveal" onClick={() => setLevelUp(null)}>
-          <div className="flip" onClick={(event) => event.stopPropagation()}>
-            <p className="tiny">УРОВЕНЬ</p>
-            <div className="num" style={{ fontSize: 64 }}>{levelUp}</div>
-            <button className="press wide" onClick={() => setLevelUp(null)}>Дальше</button>
+          <div className="unlock-card" onClick={(event) => event.stopPropagation()}>
+            <p>УРОВЕНЬ</p>
+            <div className="balance">{levelUp}</div>
+            <button className="btn btn-y" onClick={() => setLevelUp(null)}>ДАЛЬШЕ</button>
           </div>
         </div>
       ) : null}
